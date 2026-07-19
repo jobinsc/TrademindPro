@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { Plus, Search, X } from 'lucide-react';
+import InfoBubble from '@/components/ui/InfoBubble';
 import { useTrades } from '@/hooks/useTrades';
 import {
   emptyTradeInput,
@@ -114,13 +115,15 @@ export default function JournalWorkspace() {
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
             Module 1 · Journal
           </p>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-            Trade Journal
-          </h1>
-          <p className="mt-2 max-w-xl text-sm text-sky-ink/60">
-            Log a buy as <strong className="font-semibold text-sky-ink">Open</strong>, then close it later when you sell.
-            Same stock at different prices = separate entries. Dates cannot be in the future.
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+              Trade Journal
+            </h1>
+            <InfoBubble title="About Journal">
+              Log a buy as <strong className="font-semibold text-sky-ink">Open</strong>, then close it later when you sell.
+              Same stock at different prices = separate entries. Dates cannot be in the future.
+            </InfoBubble>
+          </div>
         </div>
         <button
           type="button"

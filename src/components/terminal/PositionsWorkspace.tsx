@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { ArrowRight, Circle, ListOrdered } from 'lucide-react';
+import InfoBubble from '@/components/ui/InfoBubble';
 import { useBroker } from '@/hooks/useBroker';
 import { formatCurrency } from '@/lib/utils';
 
@@ -23,12 +24,14 @@ export default function PositionsWorkspace() {
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
             Module 2 · Terminal
           </p>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-            Positions &amp; Orders
-          </h1>
-          <p className="mt-2 max-w-xl text-sm text-sky-ink/60">
-            Live positions and order book will appear here after broker API integration.
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+              Positions &amp; Orders
+            </h1>
+            <InfoBubble title="About Positions">
+              Live positions and order book will appear here after broker API integration.
+            </InfoBubble>
+          </div>
         </div>
         <div className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold ring-1 ring-[#cfe0ee]">
           <Circle

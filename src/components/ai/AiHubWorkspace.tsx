@@ -20,6 +20,7 @@ import {
   Sparkles,
   Workflow,
 } from 'lucide-react';
+import InfoBubble from '@/components/ui/InfoBubble';
 import { useAiAgents } from '@/hooks/useAiAgents';
 import { useTrades } from '@/hooks/useTrades';
 import { useRiskSettings } from '@/hooks/useRiskSettings';
@@ -131,28 +132,30 @@ export default function AiHubWorkspace() {
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
             Module 5 · AI Agent System
           </p>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-            AI Agents Hub
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm text-sky-ink/60">
-            Agents are live on your journal, risk, watchlist, and holdings.
-            {isAdmin ? (
-              <>
-                {' '}
-                Admin specialists:{' '}
-                <Link href="/app/nejoic" className="font-semibold text-sky-deep hover:underline">
-                  Nejoic
-                </Link>{' '}
-                (Nifty PA) ·{' '}
-                <Link href="/app/jimbo" className="font-semibold text-sky-deep hover:underline">
-                  Jimbo
-                </Link>{' '}
-                (stock options + CCI).
-              </>
-            ) : (
-              <> Specialist agents Nejoic &amp; Jimbo are available to admins only.</>
-            )}
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+              AI Agents Hub
+            </h1>
+            <InfoBubble title="About AI Agents">
+              Agents are live on your journal, risk, watchlist, and holdings.
+              {isAdmin ? (
+                <>
+                  {' '}
+                  Admin specialists:{' '}
+                  <Link href="/app/nejoic" className="font-semibold text-sky-deep hover:underline">
+                    Nejoic
+                  </Link>{' '}
+                  (Nifty PA) ·{' '}
+                  <Link href="/app/jimbo" className="font-semibold text-sky-deep hover:underline">
+                    Jimbo
+                  </Link>{' '}
+                  (stock options + CCI).
+                </>
+              ) : (
+                <> Specialist agents Nejoic &amp; Jimbo are available to admins only.</>
+              )}
+            </InfoBubble>
+          </div>
         </div>
         <div className="flex flex-col items-end gap-2">
           <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[12px] font-semibold text-emerald-700">

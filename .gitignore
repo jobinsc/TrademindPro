@@ -42,6 +42,9 @@ Thumbs.db
 # local scripts output
 scripts/.pa-live-last.json
 
+# cached market instrument lists
+.data/
+
 # misc
 coverage/
 .turbo/

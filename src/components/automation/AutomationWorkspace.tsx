@@ -2,15 +2,31 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Circle, OctagonX, Pause, Shield, Zap } from 'lucide-react';
+import { ArrowRight, Circle, Play, Shield, Square } from 'lucide-react';
 import { useAutomation } from '@/hooks/useAutomation';
 import { useStrategies } from '@/hooks/useStrategies';
 import { useRiskSettings } from '@/hooks/useRiskSettings';
 import { useBroker } from '@/hooks/useBroker';
+import InfoBubble from '@/components/ui/InfoBubble';
+import FullStopBar from '@/components/trading/FullStopBar';
+import type { Strategy } from '@/lib/strategies';
+
+function statusLabel(status: string) {
+  if (status === 'running') return 'RUNNING';
+  if (status === 'ready') return 'ON';
+  if (status === 'paused') return 'STOPPED';
+  return status.toUpperCase();
+}
+
+function strategyStatusLabel(status: Strategy['status']) {
+  if (status === 'ready' || status === 'live') return 'On';
+  if (status === 'paused') return 'Stopped';
+  return 'Draft';
+}
 
 export default function AutomationWorkspace() {
   const { ready, config, events, setStatus, update } = useAutomation();
-  const { strategies, ready: stratReady } = useStrategies();
+  const { strategies, ready: stratReady, update: updateStrategy } = useStrategies();
   const { settings } = useRiskSettings();
   const { connection } = useBroker();
   const [strategyId, setStrategyId] = useState('');
@@ -23,32 +39,62 @@ export default function AutomationWorkspace() {
   if (!ready || !stratReady) {
     return (
       <div className="mx-auto max-w-[1100px] px-5 py-16 text-center text-sm text-sky-ink/50 md:px-8">
-        Loading automation…
+        Loading…
       </div>
     );
   }
 
   const blockedByRisk = settings.emergencyStop;
-  const statusColor =
-    config.status === 'running'
-      ? 'text-emerald-500'
-      : config.status === 'ready'
-        ? 'text-amber-500'
-        : 'text-sky-ink/40';
+  const isOn = config.status === 'running' || config.status === 'ready';
+  const statusColor = isOn
+    ? 'text-emerald-500'
+    : config.status === 'paused'
+      ? 'text-rose-500'
+      : 'text-sky-ink/40';
 
-  function makeReady() {
+  function startAll() {
     if (blockedByRisk) {
-      alert('Emergency stop is ON in Risk Management. Release it first.');
+      alert('FULL STOP / emergency stop is ON in Risk. Turn it off first.');
       return;
     }
     if (!strategyId) {
-      alert('Select a strategy first');
+      alert('Pick a strategy first');
       return;
     }
+    const s = strategies.find((x) => x.id === strategyId);
+    if (s && (s.status === 'draft' || s.status === 'paused')) {
+      updateStrategy(s.id, { ...s, status: 'ready' });
+    }
     update(
-      { strategyId, status: 'ready' },
-      `Strategy set to Ready (${config.paperMode ? 'paper' : 'live'} mode)`
+      { strategyId, status: 'running' },
+      `Started (${config.paperMode ? 'paper' : 'live'} mode)`
     );
+  }
+
+  function stopAll() {
+    setStatus('paused', 'Stopped');
+  }
+
+  function startStrategy(s: Strategy) {
+    if (blockedByRisk) {
+      alert('FULL STOP is ON — turn it off in Risk first.');
+      return;
+    }
+    updateStrategy(s.id, { ...s, status: 'ready' });
+    update(
+      { strategyId: s.id, status: 'running' },
+      `Started strategy: ${s.name}`
+    );
+    setStrategyId(s.id);
+  }
+
+  function stopStrategy(s: Strategy) {
+    updateStrategy(s.id, { ...s, status: 'paused' });
+    if (config.strategyId === s.id) {
+      setStatus('paused', `Stopped strategy: ${s.name}`);
+    } else {
+      update({}, `Stopped strategy: ${s.name}`);
+    }
   }
 
   return (
@@ -56,27 +102,32 @@ export default function AutomationWorkspace() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
-            Module 4 · Automation
+            Module 4 · Start / Stop
           </p>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-            Auto Execution
-          </h1>
-          <p className="mt-2 max-w-xl text-sm text-sky-ink/60">
-            Set a strategy to Ready, run in paper mode first, and keep risk limits on. Live broker
-            orders stay disabled until API wiring + compliance.
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+              Start / Stop
+            </h1>
+            <InfoBubble title="About Start / Stop">
+              Start or stop auto trading. Use paper mode first. If anything goes wrong, hit FULL STOP.
+            </InfoBubble>
+          </div>
         </div>
         <div
           className={`flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold ring-1 ring-[#cfe0ee] ${statusColor}`}
         >
           <Circle className="h-2.5 w-2.5 fill-current" />
-          {config.status.toUpperCase()}
+          {statusLabel(config.status)}
         </div>
+      </div>
+
+      <div className="mt-5">
+        <FullStopBar />
       </div>
 
       {blockedByRisk && (
         <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-          Risk emergency stop is ON — automation cannot go Ready.{' '}
+          FULL STOP / emergency stop is ON — you cannot start until you turn it off.{' '}
           <Link href="/app/risk" className="font-semibold underline">
             Open Risk
           </Link>
@@ -87,42 +138,21 @@ export default function AutomationWorkspace() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => setStatus('paused', 'Automation paused')}
-            className="rounded-lg border border-white/20 px-3 py-1.5 text-xs font-semibold hover:bg-white/10"
+            onClick={startAll}
+            disabled={blockedByRisk}
+            className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-400 disabled:opacity-40"
           >
-            <span className="inline-flex items-center gap-1">
-              <Pause className="h-3.5 w-3.5" /> Pause
+            <span className="inline-flex items-center gap-1.5">
+              <Play className="h-4 w-4" /> Start
             </span>
           </button>
           <button
             type="button"
-            onClick={makeReady}
-            className="rounded-lg bg-sky-mid px-3 py-1.5 text-xs font-semibold hover:bg-[#4a96cb]"
+            onClick={stopAll}
+            className="rounded-lg bg-rose-500 px-4 py-2 text-sm font-bold text-white hover:bg-rose-400"
           >
-            <span className="inline-flex items-center gap-1">
-              <Zap className="h-3.5 w-3.5" /> Ready
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (config.status === 'ready' || config.status === 'running') {
-                setStatus('running', 'Automation marked running (demo — no live orders)');
-              } else {
-                alert('Set strategy to Ready first');
-              }
-            }}
-            className="rounded-lg bg-emerald-500/90 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
-          >
-            Run (demo)
-          </button>
-          <button
-            type="button"
-            onClick={() => setStatus('paused', 'Halt — automation force paused')}
-            className="rounded-lg bg-amber-400 px-3 py-1.5 text-xs font-semibold text-[#16384f] hover:bg-amber-300"
-          >
-            <span className="inline-flex items-center gap-1">
-              <OctagonX className="h-3.5 w-3.5" /> Halt
+            <span className="inline-flex items-center gap-1.5">
+              <Square className="h-4 w-4" /> Stop
             </span>
           </button>
           <span className="ml-auto text-xs text-white/60">
@@ -133,11 +163,11 @@ export default function AutomationWorkspace() {
 
       <div className="mt-6 grid gap-4 lg:grid-cols-5">
         <section className="space-y-4 rounded-2xl border border-[#cfe0ee]/90 bg-white p-5 lg:col-span-2">
-          <h2 className="font-display text-[15px] font-semibold text-sky-ink">Config</h2>
+          <h2 className="font-display text-[15px] font-semibold text-sky-ink">Settings</h2>
 
           <label className="block">
             <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-sky-ink/45">
-              Strategy
+              Main strategy
             </span>
             {strategies.length === 0 ? (
               <p className="text-sm text-sky-ink/55">
@@ -157,7 +187,7 @@ export default function AutomationWorkspace() {
               >
                 {strategies.map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.name} ({s.status})
+                    {s.name} ({strategyStatusLabel(s.status)})
                   </option>
                 ))}
               </select>
@@ -200,19 +230,61 @@ export default function AutomationWorkspace() {
 
           <div className="flex items-start gap-2 rounded-xl bg-sky-soft/80 px-3 py-3 text-[12px] text-sky-ink/65">
             <Shield className="mt-0.5 h-4 w-4 shrink-0 text-sky-deep" />
-            Live broker order placement is not enabled yet. Ready / Run only updates status and
-            logs.
+            Live broker orders are not enabled yet. Start / Stop only updates status and logs.
           </div>
         </section>
 
         <section className="rounded-2xl border border-[#cfe0ee]/90 bg-white p-5 lg:col-span-3">
-          <h2 className="font-display text-[15px] font-semibold text-sky-ink">Event feed</h2>
-          {events.length === 0 ? (
-            <p className="mt-6 text-sm text-sky-ink/50">
-              No events yet — set Ready or Pause to generate logs.
-            </p>
+          <h2 className="font-display text-[15px] font-semibold text-sky-ink">
+            Each strategy — Start / Stop
+          </h2>
+          {strategies.length === 0 ? (
+            <p className="mt-4 text-sm text-sky-ink/50">No strategies yet.</p>
           ) : (
-            <ul className="mt-4 max-h-[360px] space-y-2 overflow-y-auto">
+            <ul className="mt-4 space-y-2">
+              {strategies.map((s) => {
+                const on = s.status === 'ready' || s.status === 'live';
+                return (
+                  <li
+                    key={s.id}
+                    className="flex flex-wrap items-center gap-2 rounded-xl bg-sky-soft/60 px-3 py-2.5"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-sky-ink">{s.name}</p>
+                      <p className="text-[11px] text-sky-ink/45">
+                        {s.market} · {s.timeframe} · {strategyStatusLabel(s.status)}
+                        {config.strategyId === s.id && isOn ? ' · active' : ''}
+                      </p>
+                    </div>
+                    {on ? (
+                      <button
+                        type="button"
+                        onClick={() => stopStrategy(s)}
+                        className="rounded-lg bg-rose-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-rose-600"
+                      >
+                        Stop
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => startStrategy(s)}
+                        disabled={blockedByRisk}
+                        className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-40"
+                      >
+                        Start
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          <h2 className="mt-6 font-display text-[15px] font-semibold text-sky-ink">Event feed</h2>
+          {events.length === 0 ? (
+            <p className="mt-4 text-sm text-sky-ink/50">No events yet — press Start or Stop.</p>
+          ) : (
+            <ul className="mt-3 max-h-[280px] space-y-2 overflow-y-auto">
               {events.map((e) => (
                 <li key={e.id} className="flex gap-3 rounded-xl bg-sky-soft/60 px-3 py-2 text-sm">
                   <span className="shrink-0 font-mono text-[11px] text-sky-ink/40">{e.time}</span>

@@ -3,9 +3,11 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, Plus, Search, Trash2, X } from 'lucide-react';
+import InfoBubble from '@/components/ui/InfoBubble';
 import { useWatchlists } from '@/hooks/useWatchlists';
 import { type Exchange } from '@/lib/watchlist';
 import { formatCurrency, formatPercent } from '@/lib/utils';
+import { SortableTh, useSortable } from '@/components/ui/sortable';
 
 export default function WatchlistWorkspace() {
   const {
@@ -39,6 +41,27 @@ export default function WatchlistWorkspace() {
         s.notes.toUpperCase().includes(q)
     );
   }, [active, query]);
+
+  const { sorted: displayRows, sort, toggle } = useSortable(
+    filtered,
+    (row, key) => {
+      switch (key) {
+        case 'symbol':
+          return row.symbol;
+        case 'exchange':
+          return row.exchange;
+        case 'lastPrice':
+          return row.lastPrice;
+        case 'changePct':
+          return row.changePct;
+        case 'notes':
+          return row.notes || '';
+        default:
+          return '';
+      }
+    },
+    { key: 'symbol', dir: 'asc' }
+  );
 
   function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -74,13 +97,15 @@ export default function WatchlistWorkspace() {
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
             Module 2 · Terminal
           </p>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-            Watchlist
-          </h1>
-          <p className="mt-2 max-w-xl text-sm text-sky-ink/60">
-            Track NSE &amp; BSE symbols you care about. Prices shown are sample values until a broker
-            feed is connected.
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+              Watchlist
+            </h1>
+            <InfoBubble title="About Watchlist">
+              Track NSE &amp; BSE symbols you care about. Prices shown are sample values until a broker
+              feed is connected.
+            </InfoBubble>
+          </div>
         </div>
         <button
           type="button"
@@ -179,17 +204,49 @@ export default function WatchlistWorkspace() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-left text-sm">
               <thead>
-                <tr className="border-b border-[#e8f2fa] bg-sky-soft/60 text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-ink/45">
-                  <th className="px-4 py-3">Symbol</th>
-                  <th className="px-4 py-3">Exchange</th>
-                  <th className="px-4 py-3">Last (sample)</th>
-                  <th className="px-4 py-3">Change</th>
-                  <th className="px-4 py-3">Notes</th>
-                  <th className="px-4 py-3 text-right">Remove</th>
+                <tr className="border-b border-[#e8f2fa] bg-sky-soft/60">
+                  <SortableTh
+                    label="Symbol"
+                    className="px-4 py-3"
+                    active={sort.key === 'symbol'}
+                    dir={sort.dir}
+                    onClick={() => toggle('symbol')}
+                  />
+                  <SortableTh
+                    label="Exchange"
+                    className="px-4 py-3"
+                    active={sort.key === 'exchange'}
+                    dir={sort.dir}
+                    onClick={() => toggle('exchange')}
+                  />
+                  <SortableTh
+                    label="Last (sample)"
+                    className="px-4 py-3"
+                    active={sort.key === 'lastPrice'}
+                    dir={sort.dir}
+                    onClick={() => toggle('lastPrice')}
+                  />
+                  <SortableTh
+                    label="Change"
+                    className="px-4 py-3"
+                    active={sort.key === 'changePct'}
+                    dir={sort.dir}
+                    onClick={() => toggle('changePct')}
+                  />
+                  <SortableTh
+                    label="Notes"
+                    className="px-4 py-3"
+                    active={sort.key === 'notes'}
+                    dir={sort.dir}
+                    onClick={() => toggle('notes')}
+                  />
+                  <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-ink/45">
+                    Remove
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((row) => (
+                {displayRows.map((row) => (
                   <tr
                     key={row.id}
                     className="border-b border-[#e8f2fa] last:border-0 hover:bg-sky-soft/40"

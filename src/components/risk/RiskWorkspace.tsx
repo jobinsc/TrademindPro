@@ -10,6 +10,7 @@ import {
   Shield,
   ShieldCheck,
 } from 'lucide-react';
+import InfoBubble from '@/components/ui/InfoBubble';
 import { useRiskSettings } from '@/hooks/useRiskSettings';
 import { useBroker } from '@/hooks/useBroker';
 import {
@@ -76,13 +77,15 @@ export default function RiskWorkspace() {
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
             Module 4 · Risk
           </p>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-            Risk Management
-          </h1>
-          <p className="mt-2 max-w-xl text-sm text-sky-ink/60">
-            Set hard limits that protect capital. These rules will gate automation when live trading
-            is connected.
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+              Risk Management
+            </h1>
+            <InfoBubble title="About Risk">
+              Set hard limits that protect capital. These rules will gate automation when live trading
+              is connected.
+            </InfoBubble>
+          </div>
         </div>
         <button
           type="button"
@@ -97,7 +100,7 @@ export default function RiskWorkspace() {
           }`}
         >
           <OctagonX className="h-4 w-4" />
-          {form.emergencyStop ? 'Release emergency stop' : 'Emergency stop all'}
+          {form.emergencyStop ? 'Turn FULL STOP off' : 'FULL STOP'}
         </button>
       </div>
 
@@ -105,7 +108,7 @@ export default function RiskWorkspace() {
         <div className="mt-4 flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
           <p className="text-sm text-rose-800">
-            Emergency stop is <strong>ON</strong>. New orders / automation should stay blocked until
+            FULL STOP is <strong>ON</strong>. New orders / auto trading stay blocked until
             you release it.
           </p>
         </div>
@@ -317,7 +320,7 @@ export default function RiskWorkspace() {
       </div>
 
       <p className="mt-5 text-[12px] text-sky-ink/45">
-        These limits will connect to Auto Execution next.{' '}
+        These limits will connect to Start / Stop next.{' '}
         <Link href="/app/terminal" className="font-semibold text-sky-deep hover:underline">
           Broker Terminal
           <ArrowRight className="ml-0.5 inline h-3 w-3" />

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ArrowRight,
   Cable,
@@ -11,11 +12,14 @@ import {
   Unplug,
   Wallet,
 } from 'lucide-react';
+import InfoBubble from '@/components/ui/InfoBubble';
 import { useBroker } from '@/hooks/useBroker';
 import { BROKER_OPTIONS, type BrokerId } from '@/lib/broker';
 import { formatCurrency } from '@/lib/utils';
 
 export default function TerminalWorkspace() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const {
     ready,
     connection,
@@ -24,6 +28,7 @@ export default function TerminalWorkspace() {
     saveCredentials,
     connect,
     disconnect,
+    markUpstoxConnected,
   } = useBroker();
 
   const [apiKey, setApiKey] = useState('');
@@ -31,6 +36,7 @@ export default function TerminalWorkspace() {
   const [clientId, setClientId] = useState('');
   const [error, setError] = useState('');
   const [savedMsg, setSavedMsg] = useState('');
+  const [upstoxReady, setUpstoxReady] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!ready) return;
@@ -38,6 +44,27 @@ export default function TerminalWorkspace() {
     setApiSecret(connection.apiSecret);
     setClientId(connection.clientId);
   }, [ready, connection.brokerId, connection.apiKey, connection.apiSecret, connection.clientId]);
+
+  useEffect(() => {
+    fetch('/api/broker/upstox/status')
+      .then((r) => r.json())
+      .then((d) => setUpstoxReady(Boolean(d.configured)))
+      .catch(() => setUpstoxReady(false));
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    const status = searchParams.get('upstox');
+    if (!status) return;
+    if (status === 'connected') {
+      markUpstoxConnected();
+      setSavedMsg('Upstox connected — live login OK');
+      setError('');
+    } else if (status === 'error') {
+      setError(searchParams.get('message') || 'Upstox login failed');
+    }
+    router.replace('/app/terminal');
+  }, [ready, searchParams, markUpstoxConnected, router]);
 
   function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -52,6 +79,12 @@ export default function TerminalWorkspace() {
     saveCredentials({ apiKey, apiSecret, clientId });
     const result = connect();
     if (!result.ok) setError(result.error);
+  }
+
+  function handleUpstoxLogin() {
+    setError('');
+    selectBroker('upstox');
+    window.location.href = '/api/broker/upstox/login';
   }
 
   if (!ready) {
@@ -69,13 +102,15 @@ export default function TerminalWorkspace() {
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
             Module 2 · Terminal
           </p>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-            Broker Terminal
-          </h1>
-          <p className="mt-2 max-w-xl text-sm text-sky-ink/60">
-            Connect your broker keys here. Live orders and positions will plug in next — this screen
-            is the control center.
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+              Broker Terminal
+            </h1>
+            <InfoBubble title="About Terminal">
+              Connect your broker keys here. Live orders and positions will plug in next — this screen
+              is the control center.
+            </InfoBubble>
+          </div>
         </div>
         <div className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold ring-1 ring-[#cfe0ee]">
           <Circle
@@ -111,8 +146,42 @@ export default function TerminalWorkspace() {
             </h2>
           </div>
           <p className="mt-1 text-[12px] text-sky-ink/45">
-            Keys stay on this browser only (demo). Real API login comes later.
+            Use <strong className="font-semibold text-sky-ink/70">Login with Upstox</strong> for
+            real market data. App keys stay in <code className="text-[11px]">.env.local</code>.
           </p>
+
+          <div className="mt-4 rounded-xl border border-[#cfe0ee] bg-sky-soft/60 p-4">
+            <p className="text-sm font-semibold text-sky-ink">Upstox (recommended · free)</p>
+            <p className="mt-1 text-[12px] text-sky-ink/55">
+              {upstoxReady === null
+                ? 'Checking .env.local…'
+                : upstoxReady
+                  ? 'API keys found. Click below to authorize your Upstox account.'
+                  : 'Add UPSTOX_API_KEY + SECRET to .env.local and restart the app.'}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {!connection.connected || connection.brokerId !== 'upstox' ? (
+                <button
+                  type="button"
+                  onClick={handleUpstoxLogin}
+                  disabled={upstoxReady === false}
+                  className="inline-flex items-center gap-2 rounded-xl bg-sky-deep px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-ink disabled:opacity-50"
+                >
+                  <Cable className="h-4 w-4" />
+                  Login with Upstox
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={disconnect}
+                  className="inline-flex items-center gap-2 rounded-xl bg-rose-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-600"
+                >
+                  <Unplug className="h-4 w-4" />
+                  Disconnect Upstox
+                </button>
+              )}
+            </div>
+          </div>
 
           <div className="mt-4 grid grid-cols-2 gap-2">
             {BROKER_OPTIONS.map((b) => (
@@ -132,84 +201,101 @@ export default function TerminalWorkspace() {
             ))}
           </div>
 
-          <form onSubmit={handleSave} className="mt-5 space-y-3">
-            {error && (
-              <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                {error}
-              </div>
-            )}
-            {savedMsg && (
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                {savedMsg}
-              </div>
-            )}
+          {connection.brokerId !== 'upstox' && (
+            <form onSubmit={handleSave} className="mt-5 space-y-3">
+              {error && (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {error}
+                </div>
+              )}
+              {savedMsg && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  {savedMsg}
+                </div>
+              )}
 
-            <label className="block">
-              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.1em] text-sky-ink/45">
-                API Key
-              </span>
-              <input
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                className={inputClass}
-                placeholder="Your API key"
-                autoComplete="off"
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.1em] text-sky-ink/45">
-                API Secret
-              </span>
-              <input
-                type="password"
-                value={apiSecret}
-                onChange={(e) => setApiSecret(e.target.value)}
-                className={inputClass}
-                placeholder="Your API secret"
-                autoComplete="off"
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.1em] text-sky-ink/45">
-                Client / User ID
-              </span>
-              <input
-                value={clientId}
-                onChange={(e) => setClientId(e.target.value)}
-                className={inputClass}
-                placeholder="Client ID"
-                autoComplete="off"
-              />
-            </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.1em] text-sky-ink/45">
+                  API Key
+                </span>
+                <input
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  className={inputClass}
+                  placeholder="Your API key"
+                  autoComplete="off"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.1em] text-sky-ink/45">
+                  API Secret
+                </span>
+                <input
+                  type="password"
+                  value={apiSecret}
+                  onChange={(e) => setApiSecret(e.target.value)}
+                  className={inputClass}
+                  placeholder="Your API secret"
+                  autoComplete="off"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.1em] text-sky-ink/45">
+                  Client / User ID
+                </span>
+                <input
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                  className={inputClass}
+                  placeholder="Client ID"
+                  autoComplete="off"
+                />
+              </label>
 
-            <div className="flex flex-wrap gap-2 pt-1">
-              <button
-                type="submit"
-                className="rounded-xl border border-[#cfe0ee] px-4 py-2.5 text-sm font-semibold text-sky-ink/70 hover:bg-sky-soft"
-              >
-                Save keys
-              </button>
-              {!connection.connected ? (
+              <div className="flex flex-wrap gap-2 pt-1">
                 <button
-                  type="button"
-                  onClick={handleConnect}
-                  className="inline-flex items-center gap-2 rounded-xl bg-sky-deep px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-ink"
+                  type="submit"
+                  className="rounded-xl border border-[#cfe0ee] px-4 py-2.5 text-sm font-semibold text-sky-ink/70 hover:bg-sky-soft"
                 >
-                  <Cable className="h-4 w-4" />
-                  Connect
+                  Save keys
                 </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={disconnect}
-                  className="inline-flex items-center gap-2 rounded-xl bg-rose-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-600"
-                >
-                  <Unplug className="h-4 w-4" />
-                  Disconnect
-                </button>
+                {!connection.connected ? (
+                  <button
+                    type="button"
+                    onClick={handleConnect}
+                    className="inline-flex items-center gap-2 rounded-xl bg-sky-deep px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-ink"
+                  >
+                    <Cable className="h-4 w-4" />
+                    Connect (demo)
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={disconnect}
+                    className="inline-flex items-center gap-2 rounded-xl bg-rose-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-600"
+                  >
+                    <Unplug className="h-4 w-4" />
+                    Disconnect
+                  </button>
+                )}
+              </div>
+            </form>
+          )}
+
+          {connection.brokerId === 'upstox' && (error || savedMsg) && (
+            <div className="mt-4 space-y-2">
+              {error && (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {error}
+                </div>
+              )}
+              {savedMsg && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  {savedMsg}
+                </div>
               )}
             </div>
-          </form>
+          )}
         </section>
 
         <div className="space-y-4 lg:col-span-3">

@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, Pencil, Plus, Trash2, Workflow, X } from 'lucide-react';
+import InfoBubble from '@/components/ui/InfoBubble';
 import { useStrategies } from '@/hooks/useStrategies';
 import {
   STRATEGY_TEMPLATES,
@@ -86,13 +87,15 @@ export default function StrategiesWorkspace() {
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
             Module 4 · Strategies
           </p>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-            Strategy Builder
-          </h1>
-          <p className="mt-2 max-w-xl text-sm text-sky-ink/60">
-            Define entry, exit, stop-loss, and target in plain language. Visual drag-and-drop and
-            code builder come later.
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+              Strategy Builder
+            </h1>
+            <InfoBubble title="About Strategies">
+              Define entry, exit, stop-loss, and target in plain language. Visual drag-and-drop and
+              code builder come later.
+            </InfoBubble>
+          </div>
         </div>
         <button
           type="button"
@@ -107,8 +110,8 @@ export default function StrategiesWorkspace() {
       <div className="mt-7 grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="All" value={String(stats.total)} />
         <Stat label="Draft" value={String(stats.draft)} />
-        <Stat label="Ready" value={String(stats.ready)} />
-        <Stat label="Paused" value={String(stats.paused)} />
+        <Stat label="On" value={String(stats.ready)} />
+        <Stat label="Stopped" value={String(stats.paused)} />
         <Stat label="Live" value={String(stats.live)} />
       </div>
 
@@ -143,7 +146,7 @@ export default function StrategiesWorkspace() {
                 : 'bg-white text-sky-ink/65 ring-1 ring-[#cfe0ee]'
             }`}
           >
-            {s}
+            {s === 'ready' ? 'On' : s === 'paused' ? 'Stopped' : s === 'ALL' ? 'All' : s}
           </button>
         ))}
       </div>
@@ -212,7 +215,7 @@ export default function StrategiesWorkspace() {
       </div>
 
       <p className="mt-5 text-[12px] text-sky-ink/45">
-        Next: Backtesting and Auto Execution will use these strategies.{' '}
+        Next: Backtesting and Start / Stop will use these strategies.{' '}
         <Link href="/app/backtesting" className="font-semibold text-sky-deep hover:underline">
           Backtesting
           <ArrowRight className="ml-0.5 inline h-3 w-3" />
@@ -333,8 +336,8 @@ export default function StrategiesWorkspace() {
                   className={inputClass}
                 >
                   <option value="draft">Draft</option>
-                  <option value="ready">Ready</option>
-                  <option value="paused">Paused</option>
+                  <option value="ready">On</option>
+                  <option value="paused">Stopped</option>
                   <option value="live">Live</option>
                 </select>
               </label>
@@ -386,9 +389,11 @@ function StatusBadge({ status }: { status: StrategyStatus }) {
     paused: 'bg-amber-50 text-amber-700',
     live: 'bg-emerald-50 text-emerald-700',
   };
+  const label =
+    status === 'ready' ? 'On' : status === 'paused' ? 'Stopped' : status === 'live' ? 'Live' : 'Draft';
   return (
-    <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold capitalize ${styles[status]}`}>
-      {status}
+    <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${styles[status]}`}>
+      {label}
     </span>
   );
 }

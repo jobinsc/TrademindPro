@@ -3,9 +3,11 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, FileText, Plus, RotateCcw, X } from 'lucide-react';
+import InfoBubble from '@/components/ui/InfoBubble';
 import { usePaperTrading } from '@/hooks/usePaperTrading';
 import { paperPnL, summarizePaper, type PaperSide } from '@/lib/paper';
 import { formatCurrency } from '@/lib/utils';
+import { SortableTh, useSortable } from '@/components/ui/sortable';
 
 export default function PaperTradingWorkspace() {
   const { ready, account, trades, openTrade, closeTrade, resetAccount } = usePaperTrading();
@@ -19,6 +21,29 @@ export default function PaperTradingWorkspace() {
   const [exitPrice, setExitPrice] = useState(0);
 
   const summary = useMemo(() => summarizePaper(trades, account), [trades, account]);
+
+  const { sorted: displayTrades, sort, toggle } = useSortable(
+    trades,
+    (t, key) => {
+      switch (key) {
+        case 'symbol':
+          return t.symbol;
+        case 'side':
+          return t.side;
+        case 'qty':
+          return t.qty;
+        case 'entry':
+          return t.entryPrice;
+        case 'status':
+          return t.status;
+        case 'pnl':
+          return paperPnL(t) ?? -Infinity;
+        default:
+          return '';
+      }
+    },
+    { key: 'pnl', dir: 'desc' }
+  );
 
   function handleOpen(e: React.FormEvent) {
     e.preventDefault();
@@ -61,12 +86,14 @@ export default function PaperTradingWorkspace() {
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
             Module 4 · Paper Trading
           </p>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-            Paper Trading
-          </h1>
-          <p className="mt-2 max-w-xl text-sm text-sky-ink/60">
-            Practice with fake money. No real orders are sent to your broker.
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+              Paper Trading
+            </h1>
+            <InfoBubble title="About Paper Trading">
+              Practice with fake money. No real orders are sent to your broker.
+            </InfoBubble>
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -117,18 +144,56 @@ export default function PaperTradingWorkspace() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-left text-sm">
               <thead>
-                <tr className="border-b border-[#e8f2fa] bg-sky-soft/60 text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-ink/45">
-                  <th className="px-4 py-3">Symbol</th>
-                  <th className="px-4 py-3">Side</th>
-                  <th className="px-4 py-3">Qty</th>
-                  <th className="px-4 py-3">Entry / Exit</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">P&L</th>
-                  <th className="px-4 py-3 text-right">Action</th>
+                <tr className="border-b border-[#e8f2fa] bg-sky-soft/60">
+                  <SortableTh
+                    label="Symbol"
+                    className="px-4 py-3"
+                    active={sort.key === 'symbol'}
+                    dir={sort.dir}
+                    onClick={() => toggle('symbol')}
+                  />
+                  <SortableTh
+                    label="Side"
+                    className="px-4 py-3"
+                    active={sort.key === 'side'}
+                    dir={sort.dir}
+                    onClick={() => toggle('side')}
+                  />
+                  <SortableTh
+                    label="Qty"
+                    className="px-4 py-3"
+                    active={sort.key === 'qty'}
+                    dir={sort.dir}
+                    onClick={() => toggle('qty')}
+                  />
+                  <SortableTh
+                    label="Entry / Exit"
+                    className="px-4 py-3"
+                    active={sort.key === 'entry'}
+                    dir={sort.dir}
+                    onClick={() => toggle('entry')}
+                  />
+                  <SortableTh
+                    label="Status"
+                    className="px-4 py-3"
+                    active={sort.key === 'status'}
+                    dir={sort.dir}
+                    onClick={() => toggle('status')}
+                  />
+                  <SortableTh
+                    label="P&L"
+                    className="px-4 py-3"
+                    active={sort.key === 'pnl'}
+                    dir={sort.dir}
+                    onClick={() => toggle('pnl')}
+                  />
+                  <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-ink/45">
+                    Action
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {trades.map((t) => {
+                {displayTrades.map((t) => {
                   const pnl = paperPnL(t);
                   return (
                     <tr key={t.id} className="border-b border-[#e8f2fa] last:border-0">
@@ -175,9 +240,9 @@ export default function PaperTradingWorkspace() {
       </div>
 
       <p className="mt-5 text-[12px] text-sky-ink/45">
-        When ready, switch strategies to live via Auto Execution (still gated by risk).{' '}
+        When ready, start strategies from Start / Stop (still gated by risk).{' '}
         <Link href="/app/automation" className="font-semibold text-sky-deep hover:underline">
-          Auto Execution
+          Start / Stop
           <ArrowRight className="ml-0.5 inline h-3 w-3" />
         </Link>
       </p>

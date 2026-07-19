@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Ban, CheckCircle2, Shield, Trash2, UserCog } from 'lucide-react';
 import { useAuth } from '@/components/auth/AuthProvider';
+import InfoBubble from '@/components/ui/InfoBubble';
 import {
   deleteUserAccount,
   listUsersForAdmin,
@@ -106,13 +107,15 @@ export default function AdminConsole() {
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
           Module 6 · Admin
         </p>
-        <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-          Admin Console
-        </h1>
-        <p className="mt-2 max-w-xl text-sm text-sky-ink/60">
-          Signed in as <strong className="text-sky-ink">{user?.name}</strong> (admin). Manage everyone
-          who creates an account on TradeMind Pro.
-        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+            Admin Console
+          </h1>
+          <InfoBubble title="About Admin">
+            Signed in as <strong className="text-sky-ink">{user?.name}</strong> (admin). Manage everyone
+            who creates an account on TradeMind Pro.
+          </InfoBubble>
+        </div>
       </div>
 
       {message && (

@@ -148,7 +148,7 @@ export function useJimbo() {
       const open = isNseMarketOpen();
       if (on && !open) {
         persist(
-          pushEvent('Cannot arm auto — NSE is closed. Scan for study only.', {
+          pushEvent('Cannot start — market closed. Scan for study only.', {
             ...state,
             settings: { ...state.settings, autoTrade: false, status: 'market_closed' },
           })
@@ -175,7 +175,7 @@ export function useJimbo() {
         return;
       }
       persist(
-        pushEvent(on ? 'Jimbo ARMED (paper) for liquid stock options.' : 'Jimbo auto OFF.', {
+        pushEvent(on ? 'Jimbo STARTED (paper) for liquid stock options.' : 'Jimbo STOPPED.', {
           ...state,
           settings: {
             ...state.settings,

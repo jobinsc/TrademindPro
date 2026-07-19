@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, Bot, Circle } from 'lucide-react';
+import InfoBubble from '@/components/ui/InfoBubble';
 import { useAuth } from '@/components/auth/AuthProvider';
 import { useBroker } from '@/hooks/useBroker';
 
@@ -21,12 +22,14 @@ export default function SettingsWorkspace() {
   return (
     <div className="mx-auto w-full max-w-[900px] px-5 py-7 md:px-8 md:py-9">
       <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">Settings</p>
-      <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-        Settings &amp; Brokers
-      </h1>
-      <p className="mt-2 text-sm text-sky-ink/60">
-        Profile and broker connection for your TradeMind Pro account.
-      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+          Settings &amp; Brokers
+        </h1>
+        <InfoBubble title="About Settings">
+          Profile and broker connection for your TradeMind Pro account.
+        </InfoBubble>
+      </div>
 
       <section className="mt-8 rounded-2xl border border-[#cfe0ee]/90 bg-white p-5">
         <h2 className="font-display text-[15px] font-semibold text-sky-ink">Profile</h2>

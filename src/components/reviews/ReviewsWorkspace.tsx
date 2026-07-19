@@ -10,6 +10,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import InfoBubble from '@/components/ui/InfoBubble';
 import { useTrades } from '@/hooks/useTrades';
 import { useReviews } from '@/hooks/useReviews';
 import {
@@ -84,12 +85,14 @@ export default function ReviewsWorkspace() {
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
             Module 1 · Reviews
           </p>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-            Reviews &amp; Psychology
-          </h1>
-          <p className="mt-2 max-w-xl text-sm text-sky-ink/60">
-            Check your rules, track goals, and write short reviews. Insights come from your journal emotions and mistakes.
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+              Reviews &amp; Psychology
+            </h1>
+            <InfoBubble title="About Reviews">
+              Check your rules, track goals, and write short reviews. Insights come from your journal emotions and mistakes.
+            </InfoBubble>
+          </div>
         </div>
         <button
           type="button"

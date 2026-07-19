@@ -17,6 +17,7 @@ import {
   YAxis,
 } from 'recharts';
 import { ArrowRight, BookOpen } from 'lucide-react';
+import InfoBubble from '@/components/ui/InfoBubble';
 import { useTrades } from '@/hooks/useTrades';
 import { buildAnalytics } from '@/lib/trades';
 import { formatCurrency } from '@/lib/utils';
@@ -254,12 +255,14 @@ function Header() {
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
           Module 1 · Analytics
         </p>
-        <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-          Performance Analytics
-        </h1>
-        <p className="mt-2 max-w-xl text-sm text-sky-ink/60">
-          Live numbers from your journal — win rate, equity curve, strategy and emotion breakdown.
-        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+            Performance Analytics
+          </h1>
+          <InfoBubble title="About Analytics">
+            Live numbers from your journal — win rate, equity curve, strategy and emotion breakdown.
+          </InfoBubble>
+        </div>
       </div>
       <Link
         href="/app/journal"

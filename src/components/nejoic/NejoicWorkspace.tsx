@@ -4,7 +4,6 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   Activity,
-  AlertTriangle,
   Bot,
   Play,
   Send,
@@ -12,6 +11,7 @@ import {
   Target,
   Zap,
 } from 'lucide-react';
+import InfoBubble from '@/components/ui/InfoBubble';
 import {
   CartesianGrid,
   Line,
@@ -25,6 +25,15 @@ import {
 import { useNejoic } from '@/hooks/useNejoic';
 import { NEJOIC_NAME } from '@/lib/nejoic';
 import { formatCurrency } from '@/lib/utils';
+import FullStopBar from '@/components/trading/FullStopBar';
+
+function statusLabel(status: string, autoOn: boolean) {
+  if (status === 'armed' || status === 'trading') return autoOn ? 'ON' : 'OFF';
+  if (status === 'target_hit') return 'TARGET HIT';
+  if (status === 'stopped_loss') return 'MAX LOSS';
+  if (status === 'watching' || status === 'idle') return autoOn ? 'ON' : 'OFF';
+  return status.replace('_', ' ').toUpperCase();
+}
 
 export default function NejoicWorkspace() {
   const {
@@ -46,6 +55,7 @@ export default function NejoicWorkspace() {
     closeOpen,
     ask,
     clearChat,
+    requestPulse,
   } = useNejoic();
   const [prompt, setPrompt] = useState('');
 
@@ -83,13 +93,22 @@ export default function NejoicWorkspace() {
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
             Specialist Agent
           </p>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-            {NEJOIC_NAME}
-          </h1>
-          <p className="mt-2 max-w-xl text-sm text-sky-ink/60">
-            Price-action only (HH / HL / LH / LL from your Pine). No indicators. Nifty options with
-            +₹{settings.dailyProfitTarget} / -₹{settings.dailyMaxLoss} hard daily rules.
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+              {NEJOIC_NAME}
+            </h1>
+            <InfoBubble title="How Nejoic works">
+              <p>
+                Price-action only (HH / HL / LH / LL from your Pine). No indicators. Nifty options
+                with +₹{settings.dailyProfitTarget} / -₹{settings.dailyMaxLoss} hard daily rules.
+              </p>
+              <p className="mt-2">
+                Plain chart only (lb=5 rb=5). No RSI/EMA/MACD. Takes CE mainly after Higher Low in
+                uptrend, PE after Lower High in downtrend. Feed: {feedLabel}. Auto stays paper until
+                live orders.
+              </p>
+            </InfoBubble>
+          </div>
           <Link
             href="/app/nejoic/settings"
             className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-sky-deep hover:underline"
@@ -110,8 +129,7 @@ export default function NejoicWorkspace() {
             }`}
           >
             <Bot className="h-3.5 w-3.5" />
-            {settings.status.replace('_', ' ').toUpperCase()}
-            {settings.autoTrade ? ' · AUTO' : ''}
+            {statusLabel(settings.status, settings.autoTrade)}
           </span>
           <p className="text-[11px] text-sky-ink/45">
             {feedSource === 'live' ? 'Live Nifty feed' : 'Paper mode · sim chart fallback'}
@@ -119,14 +137,8 @@ export default function NejoicWorkspace() {
         </div>
       </div>
 
-      <div className="mt-5 flex items-start gap-3 rounded-2xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-sm text-amber-900/80">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.75} />
-        <p>
-          <strong>Method:</strong> plain-chart price action only (your HH/HL/LH/LL Pine, lb=5 rb=5).
-          No RSI/EMA/MACD. Nejoic takes CE mainly after <em>Higher Low</em> in uptrend, PE after{' '}
-          <em>Lower High</em> in downtrend. Hard stops: +₹{settings.dailyProfitTarget} / -₹
-          {settings.dailyMaxLoss}. Feed: <em>{feedLabel}</em>. Auto stays paper until live orders.
-        </p>
+      <div className="mt-5">
+        <FullStopBar />
       </div>
 
       <div className="mt-5 grid gap-3 sm:grid-cols-3">
@@ -331,7 +343,7 @@ export default function NejoicWorkspace() {
               className="inline-flex items-center gap-1.5 rounded-xl border border-[#cfe0ee] px-4 py-2 text-sm font-semibold text-sky-ink hover:bg-sky-soft disabled:opacity-40"
             >
               <Square className="h-4 w-4" />
-              Close open
+              Exit trade
             </button>
             <button
               type="button"
@@ -344,12 +356,12 @@ export default function NejoicWorkspace() {
               {settings.autoTrade ? (
                 <>
                   <Square className="h-4 w-4" />
-                  Stop auto
+                  Stop
                 </>
               ) : (
                 <>
                   <Zap className="h-4 w-4" />
-                  Arm auto (paper)
+                  Start
                 </>
               )}
             </button>
@@ -358,19 +370,28 @@ export default function NejoicWorkspace() {
 
         <section className="flex flex-col gap-4 lg:col-span-2">
           <div className="flex flex-1 flex-col rounded-2xl border border-[#cfe0ee]/90 bg-white p-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <h2 className="font-display text-[15px] font-semibold text-sky-ink">
                 Ask {NEJOIC_NAME}
               </h2>
-              {chat.length > 0 && (
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={clearChat}
-                  className="text-[11px] font-semibold text-sky-ink/40 hover:text-sky-deep"
+                  onClick={() => void requestPulse()}
+                  className="rounded-lg bg-sky-deep px-2.5 py-1 text-[11px] font-bold text-white hover:bg-sky-ink"
                 >
-                  Clear
+                  Pulse
                 </button>
-              )}
+                {chat.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearChat}
+                    className="text-[11px] font-semibold text-sky-ink/40 hover:text-sky-deep"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
             </div>
             <div
               className="mt-3 flex-1 space-y-2 overflow-y-auto rounded-xl bg-sky-soft/50 p-3"
@@ -378,7 +399,8 @@ export default function NejoicWorkspace() {
             >
               {chat.length === 0 ? (
                 <p className="py-8 text-center text-sm text-sky-ink/45">
-                  Ask “analyse chart” or “suggest a Nifty option trade”.
+                  Tap <strong>Pulse</strong>, or type <strong>5</strong> / <strong>15m</strong> /{' '}
+                  <strong>pulse</strong> for a live report.
                 </p>
               ) : (
                 chat.map((m) => (
@@ -400,7 +422,7 @@ export default function NejoicWorkspace() {
               onSubmit={(e) => {
                 e.preventDefault();
                 if (!prompt.trim()) return;
-                ask(prompt);
+                void ask(prompt);
                 setPrompt('');
               }}
             >
@@ -422,7 +444,7 @@ export default function NejoicWorkspace() {
                 <button
                   key={c}
                   type="button"
-                  onClick={() => ask(c)}
+                  onClick={() => void ask(c)}
                   className="rounded-full bg-sky-soft px-2.5 py-1 text-[11px] font-semibold text-sky-deep"
                 >
                   {c}
@@ -475,6 +497,7 @@ export default function NejoicWorkspace() {
                   <th className="pb-2 font-semibold">Exit</th>
                   <th className="pb-2 font-semibold">P&amp;L</th>
                   <th className="pb-2 font-semibold">Status</th>
+                  <th className="pb-2 font-semibold">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -503,6 +526,19 @@ export default function NejoicWorkspace() {
                       {t.pnl != null ? formatCurrency(t.pnl) : '—'}
                     </td>
                     <td className="py-2.5 capitalize text-sky-ink/60">{t.status}</td>
+                    <td className="py-2.5">
+                      {t.status === 'open' ? (
+                        <button
+                          type="button"
+                          onClick={() => closeOpen()}
+                          className="rounded-lg bg-rose-500 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-rose-600"
+                        >
+                          Exit
+                        </button>
+                      ) : (
+                        <span className="text-sky-ink/30">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

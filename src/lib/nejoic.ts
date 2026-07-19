@@ -1,4 +1,10 @@
 import { runPriceAction, type StructureLabel } from '@/lib/price-action';
+import type {
+  NejoicAnalysisStyle,
+  NejoicStrategyId,
+  NejoicTimeframeId,
+} from '@/lib/nejoic-options';
+import { runNejoicStrategy } from '@/lib/nejoic-strategy';
 
 export const NEJOIC_NAME = 'Nejoic';
 
@@ -16,8 +22,35 @@ export type NejoicSettings = {
   rightBars: number;
   /** Minimum confidence to take / auto trade */
   minConfidence: number;
-  /** Strict: only HL→CE and LH→PE; Balanced allows HH/LL continuation */
+  /** @deprecated mapped from analysisStyle */
   setupStyle: 'strict_hl_lh' | 'balanced';
+  /** Which brain strategy Nejoic uses */
+  strategyId: NejoicStrategyId;
+  /** How strict signals are */
+  analysisStyle: NejoicAnalysisStyle;
+  /** Main timeframe for Pulse + auto */
+  primaryTimeframe: NejoicTimeframeId;
+  /** Extra timeframes shown in Pulse report */
+  watchTimeframes: NejoicTimeframeId[];
+  emaFast: number;
+  emaSlow: number;
+  rsiPeriod: number;
+  rsiOversold: number;
+  rsiOverbought: number;
+  breakoutLookback: number;
+  respectLunchHour: boolean;
+  tradeOnlyMarketHours: boolean;
+  /**
+   * Paper study: ignore daily target / max loss — keep analysing & trading until market close
+   */
+  ignoreDailyLimits: boolean;
+  /**
+   * rules = only follow your fixed settings
+   * nejoic_math = Nejoic runs Live Pulse maths when you ask
+   */
+  askMode: 'rules' | 'nejoic_math';
+  /** Push paper trade + signal nutshells to Telegram when configured */
+  telegramNotify: boolean;
   mode: NejoicMode;
   autoTrade: boolean;
   status: NejoicStatus;
@@ -101,11 +134,55 @@ export function defaultNejoicSettings(): NejoicSettings {
     rightBars: 5,
     minConfidence: 70,
     setupStyle: 'strict_hl_lh',
+    strategyId: 'price_action_hhll',
+    analysisStyle: 'strict',
+    primaryTimeframe: '5m',
+    watchTimeframes: ['15m', '1D', '1W'],
+    emaFast: 9,
+    emaSlow: 21,
+    rsiPeriod: 14,
+    rsiOversold: 30,
+    rsiOverbought: 70,
+    breakoutLookback: 20,
+    respectLunchHour: true,
+    tradeOnlyMarketHours: true,
+    ignoreDailyLimits: false,
+    askMode: 'nejoic_math',
+    telegramNotify: true,
     mode: 'paper',
     autoTrade: false,
     status: 'idle',
     updatedAt: null,
   };
+}
+
+export function styleToSetup(
+  style: NejoicAnalysisStyle
+): 'strict_hl_lh' | 'balanced' {
+  return style === 'strict' ? 'strict_hl_lh' : 'balanced';
+}
+
+export function confidenceForStyle(style: NejoicAnalysisStyle, base: number): number {
+  if (style === 'aggressive') return Math.max(50, base - 15);
+  if (style === 'balanced') return Math.max(55, base - 5);
+  return base;
+}
+
+export function analyzeOptsFromSettings(s: NejoicSettings) {
+  return {
+    leftBars: s.leftBars ?? 5,
+    rightBars: s.rightBars ?? 5,
+    setupStyle: s.setupStyle ?? styleToSetup(s.analysisStyle ?? 'strict'),
+    minConfidence: s.minConfidence ?? 70,
+    strategyId: s.strategyId ?? 'price_action_hhll',
+    analysisStyle: s.analysisStyle ?? 'strict',
+    emaFast: s.emaFast ?? 9,
+    emaSlow: s.emaSlow ?? 21,
+    rsiPeriod: s.rsiPeriod ?? 14,
+    rsiOversold: s.rsiOversold ?? 30,
+    rsiOverbought: s.rsiOverbought ?? 70,
+    breakoutLookback: s.breakoutLookback ?? 20,
+  } as const;
 }
 
 export function todayKey(): string {
@@ -163,32 +240,98 @@ export function tickNifty(candles: Candle[]): Candle[] {
 
 export function analyzeNifty(
   candles: Candle[],
-  settings?: Pick<NejoicSettings, 'leftBars' | 'rightBars' | 'setupStyle' | 'minConfidence'>
+  settings?: Pick<
+    NejoicSettings,
+    | 'leftBars'
+    | 'rightBars'
+    | 'setupStyle'
+    | 'minConfidence'
+    | 'strategyId'
+    | 'analysisStyle'
+    | 'emaFast'
+    | 'emaSlow'
+    | 'rsiPeriod'
+    | 'rsiOversold'
+    | 'rsiOverbought'
+    | 'breakoutLookback'
+  >
 ): NejoicSignal {
   const spot = candles[candles.length - 1]?.close ?? 24850;
-  const pa = runPriceAction(candles, {
-    leftBars: settings?.leftBars ?? 5,
-    rightBars: settings?.rightBars ?? 5,
-  });
+  const analysisStyle = settings?.analysisStyle ?? 'strict';
+  const setupStyle =
+    settings?.setupStyle ?? styleToSetup(analysisStyle);
+  const minConf = confidenceForStyle(
+    analysisStyle,
+    settings?.minConfidence ?? 70
+  );
+  const strategyId = settings?.strategyId ?? 'price_action_hhll';
 
-  const style = settings?.setupStyle ?? 'strict_hl_lh';
-  const minConf = settings?.minConfidence ?? 70;
+  const usePa =
+    strategyId === 'price_action_hhll' || strategyId === 'swing_hl';
 
-  let bias = pa.bias;
-  let setup = pa.setup;
-  let confidence = pa.confidence;
-  let entryHint = pa.entryHint;
+  let bias: OptionBias = 'FLAT';
+  let setup = 'WAIT';
+  let confidence = 40;
+  let entryHint = '';
+  let structureText = '';
+  let lastLabel: StructureLabel | null = null;
+  let trend: 1 | -1 | 0 = 0;
+  let support: number | null = null;
+  let resistance: number | null = null;
+  let labels: NejoicSignal['labels'] = [];
 
-  // Strict Nejoic: only HL→CE and LH→PE (no chase continuations)
-  if (style === 'strict_hl_lh') {
-    const allowed = setup === 'HL_IN_UPTREND' || setup === 'LH_IN_DOWNTREND';
-    if (!allowed) {
-      bias = 'FLAT';
-      setup = setup.startsWith('WAIT') ? setup : 'WAIT_STRICT';
-      confidence = Math.min(confidence, 55);
-      entryHint =
-        'Strict mode: only Higher Low → CE or Lower High → PE. Waiting for that print.';
+  if (usePa) {
+    const lb = strategyId === 'swing_hl' ? Math.max(settings?.leftBars ?? 5, 8) : settings?.leftBars ?? 5;
+    const rb = strategyId === 'swing_hl' ? Math.max(settings?.rightBars ?? 5, 8) : settings?.rightBars ?? 5;
+    const pa = runPriceAction(candles, { leftBars: lb, rightBars: rb });
+    bias = pa.bias;
+    setup = pa.setup;
+    confidence = pa.confidence;
+    entryHint = pa.entryHint;
+    structureText = pa.structureText;
+    lastLabel = pa.lastLabel;
+    trend = pa.trend;
+    support = pa.support;
+    resistance = pa.resistance;
+    labels = pa.labels.slice(-12);
+
+    if (setupStyle === 'strict_hl_lh' || analysisStyle === 'strict') {
+      const allowed = setup === 'HL_IN_UPTREND' || setup === 'LH_IN_DOWNTREND';
+      if (!allowed) {
+        bias = 'FLAT';
+        setup = setup.startsWith('WAIT') ? setup : 'WAIT_STRICT';
+        confidence = Math.min(confidence, 55);
+        entryHint =
+          'Strict mode: only Higher Low → CE or Lower High → PE. Waiting for that print.';
+      }
     }
+  } else {
+    const alt = runNejoicStrategy(strategyId, candles, {
+      emaFast: settings?.emaFast ?? 9,
+      emaSlow: settings?.emaSlow ?? 21,
+      rsiPeriod: settings?.rsiPeriod ?? 14,
+      rsiOversold: settings?.rsiOversold ?? 30,
+      rsiOverbought: settings?.rsiOverbought ?? 70,
+      breakoutLookback: settings?.breakoutLookback ?? 20,
+    });
+    if (alt) {
+      bias = alt.bias;
+      setup = alt.setup;
+      confidence = alt.confidence;
+      entryHint = alt.reason;
+      structureText = alt.reason;
+    }
+    // Still run PA for levels display
+    const pa = runPriceAction(candles, {
+      leftBars: settings?.leftBars ?? 5,
+      rightBars: settings?.rightBars ?? 5,
+    });
+    support = pa.support;
+    resistance = pa.resistance;
+    trend = pa.trend;
+    lastLabel = pa.lastLabel;
+    labels = pa.labels.slice(-12);
+    if (!structureText) structureText = pa.structureText;
   }
 
   if (confidence < minConf) {
@@ -197,7 +340,8 @@ export function analyzeNifty(
 
   const strike = round50(spot);
   const range =
-    candles.slice(-20).reduce((a, c) => a + (c.high - c.low), 0) / Math.max(1, Math.min(20, candles.length));
+    candles.slice(-20).reduce((a, c) => a + (c.high - c.low), 0) /
+    Math.max(1, Math.min(20, candles.length));
 
   const premium =
     bias === 'FLAT'
@@ -205,13 +349,18 @@ export function analyzeNifty(
       : Math.max(40, Math.round((70 + range * 1.1) * 100) / 100);
 
   const reason = [
-    pa.structureText,
+    structureText,
     entryHint,
-    `Method: plain chart HH/HL/LH/LL · style ${style} · min conf ${minConf}%.`,
-  ].join(' ');
+    `Strategy: ${strategyId} · style ${analysisStyle} · min conf ${minConf}%.`,
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return {
-    id: crypto.randomUUID?.() ?? `sig-${Date.now()}`,
+    id:
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `sig-${Date.now()}`,
     at: new Date().toISOString(),
     bias,
     strike,
@@ -222,12 +371,12 @@ export function analyzeNifty(
     niftySpot: spot,
     method: 'price_action_hhll',
     setup,
-    lastLabel: pa.lastLabel,
-    trend: pa.trend,
-    support: pa.support,
-    resistance: pa.resistance,
-    structureText: pa.structureText,
-    labels: pa.labels.slice(-12),
+    lastLabel,
+    trend,
+    support,
+    resistance,
+    structureText,
+    labels,
   };
 }
 
@@ -246,9 +395,11 @@ export function evaluateDayStatus(
   settings: NejoicSettings,
   trades: NejoicTrade[]
 ): NejoicStatus {
-  const pnl = realizedToday(trades);
-  if (pnl >= settings.dailyProfitTarget) return 'target_hit';
-  if (pnl <= -Math.abs(settings.dailyMaxLoss)) return 'stopped_loss';
+  if (!settings.ignoreDailyLimits) {
+    const pnl = realizedToday(trades);
+    if (pnl >= settings.dailyProfitTarget) return 'target_hit';
+    if (pnl <= -Math.abs(settings.dailyMaxLoss)) return 'stopped_loss';
+  }
   if (settings.autoTrade && (settings.status === 'trading' || settings.status === 'armed')) {
     return settings.status === 'armed' ? 'armed' : 'trading';
   }
@@ -264,11 +415,13 @@ export function canOpenTrade(settings: NejoicSettings, trades: NejoicTrade[]): {
   if (settings.mode === 'live') {
     return { ok: false, reason: 'Live broker orders not connected yet. Stay in Paper mode.' };
   }
-  if (pnl >= settings.dailyProfitTarget) {
-    return { ok: false, reason: `Daily target ₹${settings.dailyProfitTarget} hit — Nejoic stops for today.` };
-  }
-  if (pnl <= -Math.abs(settings.dailyMaxLoss)) {
-    return { ok: false, reason: `Max loss ₹${settings.dailyMaxLoss} hit — Nejoic locked for today.` };
+  if (!settings.ignoreDailyLimits) {
+    if (pnl >= settings.dailyProfitTarget) {
+      return { ok: false, reason: `Daily target ₹${settings.dailyProfitTarget} hit — Nejoic stops for today.` };
+    }
+    if (pnl <= -Math.abs(settings.dailyMaxLoss)) {
+      return { ok: false, reason: `Max loss ₹${settings.dailyMaxLoss} hit — Nejoic locked for today.` };
+    }
   }
   if (trades.some((t) => t.status === 'open')) {
     return { ok: false, reason: 'Already have an open Nejoic option. Close it first.' };
@@ -331,10 +484,10 @@ export function nejoicReply(
     return `I’m ${NEJOIC_NAME}. Ask me about the Nifty chart or a CE/PE idea. ${pnlLine}`;
   }
 
-  if (ctx.status === 'stopped_loss') {
+  if (ctx.status === 'stopped_loss' && !ctx.settings.ignoreDailyLimits) {
     return `I’m locked for today — max loss ₹${ctx.settings.dailyMaxLoss} reached. Protect capital; we resume next session.`;
   }
-  if (ctx.status === 'target_hit') {
+  if (ctx.status === 'target_hit' && !ctx.settings.ignoreDailyLimits) {
     return `Daily target ₹${ctx.settings.dailyProfitTarget} done. No more trades today — bank it.`;
   }
 

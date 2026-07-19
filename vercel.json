@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/nejoic/cron",
+      "schedule": "*/3 * * * *"
+    }
+  ]
+}

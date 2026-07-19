@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import {
-  AlertTriangle,
   Bot,
   Clock,
   Play,
@@ -16,6 +15,9 @@ import {
 import { useJimbo } from '@/hooks/useJimbo';
 import { JIMBO_NAME, JIMBO_UNIVERSE } from '@/lib/jimbo';
 import { formatCurrency } from '@/lib/utils';
+import { SortableTh, useSortable } from '@/components/ui/sortable';
+import FullStopBar from '@/components/trading/FullStopBar';
+import InfoBubble from '@/components/ui/InfoBubble';
 
 export default function JimboWorkspace() {
   const {
@@ -44,6 +46,27 @@ export default function JimboWorkspace() {
   const locked =
     settings.status === 'target_hit' || settings.status === 'stopped_loss';
 
+  const { sorted: displaySignals, sort, toggle } = useSortable(
+    signals,
+    (s, key) => {
+      switch (key) {
+        case 'symbol':
+          return s.symbol;
+        case 'cci':
+          return s.cciCurr;
+        case 'bias':
+          return s.bias;
+        case 'atm':
+          return s.strike;
+        case 'conf':
+          return s.confidence;
+        default:
+          return '';
+      }
+    },
+    { key: 'conf', dir: 'desc' }
+  );
+
   if (!ready) {
     return (
       <div className="mx-auto max-w-[1100px] px-5 py-16 text-center text-sm text-sky-ink/50 md:px-8">
@@ -59,17 +82,22 @@ export default function JimboWorkspace() {
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
             Specialist Agent
           </p>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-            {JIMBO_NAME}
-          </h1>
-          <p className="mt-2 max-w-xl text-sm text-sky-ink/60">
-            Stock options only — liquid Nifty-50 / F&O names. CCI crosses 0 + price action → ATM CE
-            (up) or ATM PE (down). Sibling of{' '}
-            <Link href="/app/nejoic" className="font-semibold text-sky-deep hover:underline">
-              Nejoic
-            </Link>{' '}
-            (index).
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+              {JIMBO_NAME}
+            </h1>
+            <InfoBubble title="How Jimbo works">
+              <p>
+                Stock options only — liquid Nifty-50 / F&O names. CCI crosses 0 + price action → ATM
+                CE (up) or ATM PE (down). Sibling of Nejoic (index).
+              </p>
+              <p className="mt-2">
+                CCI({settings.cciPeriod}) rising through 0 → Call. Falling through 0 → Put. Auto only
+                while NSE is open. Hard day limits: +₹{settings.dailyProfitTarget} / -₹
+                {settings.dailyMaxLoss}.
+              </p>
+            </InfoBubble>
+          </div>
           <Link
             href="/app/jimbo/settings"
             className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-sky-deep hover:underline"
@@ -92,14 +120,8 @@ export default function JimboWorkspace() {
         </div>
       </div>
 
-      <div className="mt-5 flex items-start gap-3 rounded-2xl border border-[#cfe0ee] bg-sky-soft/50 px-4 py-3 text-sm text-sky-ink/70">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-sky-deep" strokeWidth={1.75} />
-        <p>
-          <strong>Jimbo logic:</strong> CCI({settings.cciPeriod}) rising through 0 → check PA → liquid
-          ATM <em>Call</em>. CCI falling through 0 → check PA → liquid ATM <em>Put</em>. Auto only
-          while NSE is open. Candles are demo until live stock feed is wired. Hard day limits: +₹
-          {settings.dailyProfitTarget} / -₹{settings.dailyMaxLoss}.
-        </p>
+      <div className="mt-5">
+        <FullStopBar />
       </div>
 
       <div className="mt-5 grid gap-3 sm:grid-cols-3">
@@ -168,7 +190,7 @@ export default function JimboWorkspace() {
           className="inline-flex items-center gap-1.5 rounded-xl border border-[#cfe0ee] px-4 py-2.5 text-sm font-semibold text-sky-ink hover:bg-sky-soft disabled:opacity-40"
         >
           <Square className="h-4 w-4" />
-          Close open
+          Exit trade
         </button>
         <button
           type="button"
@@ -181,12 +203,12 @@ export default function JimboWorkspace() {
           {settings.autoTrade ? (
             <>
               <Square className="h-4 w-4" />
-              Stop auto
+              Stop
             </>
           ) : (
             <>
               <Zap className="h-4 w-4" />
-              Arm auto (paper, market hours)
+              Start
             </>
           )}
         </button>
@@ -207,18 +229,48 @@ export default function JimboWorkspace() {
           ) : (
             <div className="mt-3 overflow-x-auto">
               <table className="w-full min-w-[640px] text-left text-sm">
-                <thead className="text-[11px] uppercase tracking-wide text-sky-ink/40">
+                <thead>
                   <tr>
-                    <th className="pb-2 font-semibold">Stock</th>
-                    <th className="pb-2 font-semibold">CCI</th>
-                    <th className="pb-2 font-semibold">Bias</th>
-                    <th className="pb-2 font-semibold">ATM</th>
-                    <th className="pb-2 font-semibold">Conf</th>
-                    <th className="pb-2 font-semibold" />
+                    <SortableTh
+                      label="Stock"
+                      className="pb-2"
+                      active={sort.key === 'symbol'}
+                      dir={sort.dir}
+                      onClick={() => toggle('symbol')}
+                    />
+                    <SortableTh
+                      label="CCI"
+                      className="pb-2"
+                      active={sort.key === 'cci'}
+                      dir={sort.dir}
+                      onClick={() => toggle('cci')}
+                    />
+                    <SortableTh
+                      label="Bias"
+                      className="pb-2"
+                      active={sort.key === 'bias'}
+                      dir={sort.dir}
+                      onClick={() => toggle('bias')}
+                    />
+                    <SortableTh
+                      label="ATM"
+                      className="pb-2"
+                      active={sort.key === 'atm'}
+                      dir={sort.dir}
+                      onClick={() => toggle('atm')}
+                    />
+                    <SortableTh
+                      label="Conf"
+                      className="pb-2"
+                      active={sort.key === 'conf'}
+                      dir={sort.dir}
+                      onClick={() => toggle('conf')}
+                    />
+                    <th className="pb-2" />
                   </tr>
                 </thead>
                 <tbody>
-                  {signals.slice(0, 12).map((s) => (
+                  {displaySignals.slice(0, 20).map((s) => (
                     <tr key={s.id} className="border-t border-[#e8f0f6] align-top">
                       <td className="py-2.5">
                         <p className="font-semibold text-sky-ink">{s.symbol}</p>
@@ -390,6 +442,7 @@ export default function JimboWorkspace() {
                   <th className="pb-2 font-semibold">Exit</th>
                   <th className="pb-2 font-semibold">P&amp;L</th>
                   <th className="pb-2 font-semibold">Status</th>
+                  <th className="pb-2 font-semibold">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -418,6 +471,19 @@ export default function JimboWorkspace() {
                       {t.pnl != null ? formatCurrency(t.pnl) : '—'}
                     </td>
                     <td className="py-2.5 capitalize text-sky-ink/60">{t.status}</td>
+                    <td className="py-2.5">
+                      {t.status === 'open' ? (
+                        <button
+                          type="button"
+                          onClick={() => closeOpen()}
+                          className="rounded-lg bg-rose-500 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-rose-600"
+                        >
+                          Exit
+                        </button>
+                      ) : (
+                        <span className="text-sky-ink/30">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

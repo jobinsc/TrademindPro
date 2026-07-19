@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, Briefcase, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import InfoBubble from '@/components/ui/InfoBubble';
 import { useHoldings } from '@/hooks/useHoldings';
 import { useBroker } from '@/hooks/useBroker';
 import {
@@ -18,6 +19,7 @@ import {
 } from '@/lib/holdings';
 import type { Exchange } from '@/lib/watchlist';
 import { formatCurrency, formatPercent } from '@/lib/utils';
+import { SortableTh, useSortable } from '@/components/ui/sortable';
 
 export default function HoldingsWorkspace() {
   const { holdings, ready, addHolding, updateHolding, deleteHolding } = useHoldings();
@@ -40,6 +42,29 @@ export default function HoldingsWorkspace() {
         h.sector.toUpperCase().includes(q)
     );
   }, [holdings, query]);
+
+  const { sorted: displayHoldings, sort, toggle } = useSortable(
+    filtered,
+    (h, key) => {
+      switch (key) {
+        case 'symbol':
+          return h.symbol;
+        case 'qty':
+          return h.qty;
+        case 'avg':
+          return h.avgPrice;
+        case 'ltp':
+          return h.ltp;
+        case 'value':
+          return holdingValue(h);
+        case 'pnl':
+          return holdingPnL(h);
+        default:
+          return '';
+      }
+    },
+    { key: 'pnl', dir: 'desc' }
+  );
 
   function openCreate() {
     setEditing(null);
@@ -100,13 +125,15 @@ export default function HoldingsWorkspace() {
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
             Module 2 · Portfolio
           </p>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-            Holdings &amp; Portfolio
-          </h1>
-          <p className="mt-2 max-w-xl text-sm text-sky-ink/60">
-            Track delivery holdings manually for now. When broker sync is live, these will auto-fill
-            from your demat.
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+              Holdings &amp; Portfolio
+            </h1>
+            <InfoBubble title="About Holdings">
+              Track delivery holdings manually for now. When broker sync is live, these will auto-fill
+              from your demat.
+            </InfoBubble>
+          </div>
         </div>
         <button
           type="button"
@@ -167,18 +194,56 @@ export default function HoldingsWorkspace() {
             <div className="overflow-x-auto">
               <table className="w-full min-w-[700px] text-left text-sm">
                 <thead>
-                  <tr className="border-b border-[#e8f2fa] text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-ink/45">
-                    <th className="px-2 py-2">Symbol</th>
-                    <th className="px-2 py-2">Qty</th>
-                    <th className="px-2 py-2">Avg</th>
-                    <th className="px-2 py-2">LTP</th>
-                    <th className="px-2 py-2">Value</th>
-                    <th className="px-2 py-2">P&L</th>
-                    <th className="px-2 py-2 text-right">Actions</th>
+                  <tr className="border-b border-[#e8f2fa]">
+                    <SortableTh
+                      label="Symbol"
+                      className="px-2 py-2"
+                      active={sort.key === 'symbol'}
+                      dir={sort.dir}
+                      onClick={() => toggle('symbol')}
+                    />
+                    <SortableTh
+                      label="Qty"
+                      className="px-2 py-2"
+                      active={sort.key === 'qty'}
+                      dir={sort.dir}
+                      onClick={() => toggle('qty')}
+                    />
+                    <SortableTh
+                      label="Avg"
+                      className="px-2 py-2"
+                      active={sort.key === 'avg'}
+                      dir={sort.dir}
+                      onClick={() => toggle('avg')}
+                    />
+                    <SortableTh
+                      label="LTP"
+                      className="px-2 py-2"
+                      active={sort.key === 'ltp'}
+                      dir={sort.dir}
+                      onClick={() => toggle('ltp')}
+                    />
+                    <SortableTh
+                      label="Value"
+                      className="px-2 py-2"
+                      active={sort.key === 'value'}
+                      dir={sort.dir}
+                      onClick={() => toggle('value')}
+                    />
+                    <SortableTh
+                      label="P&L"
+                      className="px-2 py-2"
+                      active={sort.key === 'pnl'}
+                      dir={sort.dir}
+                      onClick={() => toggle('pnl')}
+                    />
+                    <th className="px-2 py-2 text-right text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-ink/45">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((h) => {
+                  {displayHoldings.map((h) => {
                     const pnl = holdingPnL(h);
                     return (
                       <tr key={h.id} className="border-b border-[#e8f2fa] last:border-0">

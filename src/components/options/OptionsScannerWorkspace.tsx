@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, CandlestickChart } from 'lucide-react';
+import InfoBubble from '@/components/ui/InfoBubble';
 import {
   UNDERLYINGS,
   avgIv,
@@ -11,6 +12,7 @@ import {
   calcPcr,
 } from '@/lib/options';
 import { formatCurrency, formatNumber, formatPercent } from '@/lib/utils';
+import { SortableTh, useSortable } from '@/components/ui/sortable';
 
 export default function OptionsScannerWorkspace() {
   const [underlyingId, setUnderlyingId] = useState(UNDERLYINGS[0].id);
@@ -22,6 +24,35 @@ export default function OptionsScannerWorkspace() {
   const iv = useMemo(() => avgIv(chain), [chain]);
   const atm = chain[Math.floor(chain.length / 2)]?.strike;
 
+  const { sorted: displayChain, sort, toggle } = useSortable(
+    chain,
+    (row, key) => {
+      switch (key) {
+        case 'ceLtp':
+          return row.ceLtp;
+        case 'ceOi':
+          return row.ceOi;
+        case 'ceOiChange':
+          return row.ceOiChange;
+        case 'ceIv':
+          return row.ceIv;
+        case 'strike':
+          return row.strike;
+        case 'peIv':
+          return row.peIv;
+        case 'peOiChange':
+          return row.peOiChange;
+        case 'peOi':
+          return row.peOi;
+        case 'peLtp':
+          return row.peLtp;
+        default:
+          return 0;
+      }
+    },
+    { key: 'strike', dir: 'asc' }
+  );
+
   return (
     <div className="mx-auto w-full max-w-[1200px] px-5 py-7 md:px-8 md:py-9">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -29,13 +60,15 @@ export default function OptionsScannerWorkspace() {
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
             Module 3 · Options
           </p>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-            Options Scanner
-          </h1>
-          <p className="mt-2 max-w-xl text-sm text-sky-ink/60">
-            Options chain, PCR, max pain, and IV — demo data for now. Live NSE F&amp;O feed comes
-            later.
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+              Options Scanner
+            </h1>
+            <InfoBubble title="About Options Scanner">
+              Options chain, PCR, max pain, and IV — demo data for now. Live NSE F&amp;O feed comes
+              later.
+            </InfoBubble>
+          </div>
         </div>
         <div className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold ring-1 ring-[#cfe0ee]">
           <CandlestickChart className="h-3.5 w-3.5 text-sky-deep" strokeWidth={1.75} />
@@ -85,20 +118,74 @@ export default function OptionsScannerWorkspace() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px] text-left text-[13px]">
             <thead>
-              <tr className="border-b border-[#e8f2fa] bg-sky-soft/60 text-[10px] font-semibold uppercase tracking-[0.1em] text-sky-ink/45">
-                <th className="px-3 py-2.5 text-emerald-700">CE LTP</th>
-                <th className="px-3 py-2.5 text-emerald-700">CE OI</th>
-                <th className="px-3 py-2.5 text-emerald-700">OI Chg</th>
-                <th className="px-3 py-2.5 text-emerald-700">CE IV</th>
-                <th className="px-3 py-2.5 text-center text-sky-ink">Strike</th>
-                <th className="px-3 py-2.5 text-rose-600">PE IV</th>
-                <th className="px-3 py-2.5 text-rose-600">OI Chg</th>
-                <th className="px-3 py-2.5 text-rose-600">PE OI</th>
-                <th className="px-3 py-2.5 text-rose-600">PE LTP</th>
+              <tr className="border-b border-[#e8f2fa] bg-sky-soft/60">
+                <SortableTh
+                  label="CE LTP"
+                  className="px-3 py-2.5"
+                  active={sort.key === 'ceLtp'}
+                  dir={sort.dir}
+                  onClick={() => toggle('ceLtp')}
+                />
+                <SortableTh
+                  label="CE OI"
+                  className="px-3 py-2.5"
+                  active={sort.key === 'ceOi'}
+                  dir={sort.dir}
+                  onClick={() => toggle('ceOi')}
+                />
+                <SortableTh
+                  label="OI Chg"
+                  className="px-3 py-2.5"
+                  active={sort.key === 'ceOiChange'}
+                  dir={sort.dir}
+                  onClick={() => toggle('ceOiChange')}
+                />
+                <SortableTh
+                  label="CE IV"
+                  className="px-3 py-2.5"
+                  active={sort.key === 'ceIv'}
+                  dir={sort.dir}
+                  onClick={() => toggle('ceIv')}
+                />
+                <SortableTh
+                  label="Strike"
+                  className="px-3 py-2.5 text-center"
+                  active={sort.key === 'strike'}
+                  dir={sort.dir}
+                  onClick={() => toggle('strike')}
+                />
+                <SortableTh
+                  label="PE IV"
+                  className="px-3 py-2.5"
+                  active={sort.key === 'peIv'}
+                  dir={sort.dir}
+                  onClick={() => toggle('peIv')}
+                />
+                <SortableTh
+                  label="OI Chg"
+                  className="px-3 py-2.5"
+                  active={sort.key === 'peOiChange'}
+                  dir={sort.dir}
+                  onClick={() => toggle('peOiChange')}
+                />
+                <SortableTh
+                  label="PE OI"
+                  className="px-3 py-2.5"
+                  active={sort.key === 'peOi'}
+                  dir={sort.dir}
+                  onClick={() => toggle('peOi')}
+                />
+                <SortableTh
+                  label="PE LTP"
+                  className="px-3 py-2.5"
+                  active={sort.key === 'peLtp'}
+                  dir={sort.dir}
+                  onClick={() => toggle('peLtp')}
+                />
               </tr>
             </thead>
             <tbody>
-              {chain.map((row) => {
+              {displayChain.map((row) => {
                 const isAtm = row.strike === atm;
                 return (
                   <tr

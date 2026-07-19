@@ -12,6 +12,7 @@ import {
   YAxis,
 } from 'recharts';
 import { ArrowRight, FlaskConical, Play, Trash2 } from 'lucide-react';
+import InfoBubble from '@/components/ui/InfoBubble';
 import { useBacktests } from '@/hooks/useBacktests';
 import { useStrategies } from '@/hooks/useStrategies';
 import { todayISO } from '@/lib/trades';
@@ -78,13 +79,15 @@ export default function BacktestingWorkspace() {
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
           Module 4 · Backtesting
         </p>
-        <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-          Backtesting Engine
-        </h1>
-        <p className="mt-2 max-w-xl text-sm text-sky-ink/60">
-          Run a strategy on historical dates. Results are simulated demo metrics until real NSE/BSE
-          history is connected.
-        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+            Backtesting Engine
+          </h1>
+          <InfoBubble title="About Backtesting">
+            Run a strategy on historical dates. Results are simulated demo metrics until real NSE/BSE
+            history is connected.
+          </InfoBubble>
+        </div>
       </div>
 
       <div className="mt-7 grid gap-4 lg:grid-cols-5">

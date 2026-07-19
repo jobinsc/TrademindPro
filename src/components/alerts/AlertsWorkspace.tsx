@@ -13,6 +13,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
+import InfoBubble from '@/components/ui/InfoBubble';
 import { useAlerts } from '@/hooks/useAlerts';
 import { useWatchlists } from '@/hooks/useWatchlists';
 import {
@@ -25,6 +26,7 @@ import {
 } from '@/lib/alerts';
 import type { Exchange } from '@/lib/watchlist';
 import { formatCurrency } from '@/lib/utils';
+import { SortableTh, useSortable } from '@/components/ui/sortable';
 
 export default function AlertsWorkspace() {
   const { alerts, ready, addAlert, updateStatus, deleteAlert } = useAlerts();
@@ -62,6 +64,29 @@ export default function AlertsWorkspace() {
       return matchQ && matchStatus;
     });
   }, [alerts, query, statusFilter]);
+
+  const priorityRank = { critical: 3, medium: 2, low: 1 } as const;
+  const statusRank = { active: 3, triggered: 2, paused: 1 } as const;
+  const { sorted: displayAlerts, sort, toggle } = useSortable(
+    filtered,
+    (a, key) => {
+      switch (key) {
+        case 'symbol':
+          return a.symbol;
+        case 'target':
+          return a.targetPrice;
+        case 'priority':
+          return priorityRank[a.priority] ?? 0;
+        case 'status':
+          return statusRank[a.status] ?? 0;
+        case 'note':
+          return a.note || '';
+        default:
+          return '';
+      }
+    },
+    { key: 'priority', dir: 'desc' }
+  );
 
   function openCreate() {
     setForm(emptyAlertInput());
@@ -103,13 +128,15 @@ export default function AlertsWorkspace() {
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
             Module 3 · Alerts
           </p>
-          <h1 className="mt-2 font-display text-3xl font-semibold tracking-tight text-sky-ink">
-            Alerts
-          </h1>
-          <p className="mt-2 max-w-xl text-sm text-sky-ink/60">
-            Set price alerts (above / below). When live market data is connected, these will trigger
-            automatically. For now you can manage and mark them manually.
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
+              Alerts
+            </h1>
+            <InfoBubble title="About Alerts">
+              Set price alerts (above / below). When live market data is connected, these will trigger
+              automatically. For now you can manage and mark them manually.
+            </InfoBubble>
+          </div>
         </div>
         <button
           type="button"
@@ -183,17 +210,49 @@ export default function AlertsWorkspace() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] text-left text-sm">
               <thead>
-                <tr className="border-b border-[#e8f2fa] bg-sky-soft/60 text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-ink/45">
-                  <th className="px-4 py-3">Symbol</th>
-                  <th className="px-4 py-3">Condition</th>
-                  <th className="px-4 py-3">Priority</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Note</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
+                <tr className="border-b border-[#e8f2fa] bg-sky-soft/60">
+                  <SortableTh
+                    label="Symbol"
+                    className="px-4 py-3"
+                    active={sort.key === 'symbol'}
+                    dir={sort.dir}
+                    onClick={() => toggle('symbol')}
+                  />
+                  <SortableTh
+                    label="Condition"
+                    className="px-4 py-3"
+                    active={sort.key === 'target'}
+                    dir={sort.dir}
+                    onClick={() => toggle('target')}
+                  />
+                  <SortableTh
+                    label="Priority"
+                    className="px-4 py-3"
+                    active={sort.key === 'priority'}
+                    dir={sort.dir}
+                    onClick={() => toggle('priority')}
+                  />
+                  <SortableTh
+                    label="Status"
+                    className="px-4 py-3"
+                    active={sort.key === 'status'}
+                    dir={sort.dir}
+                    onClick={() => toggle('status')}
+                  />
+                  <SortableTh
+                    label="Note"
+                    className="px-4 py-3"
+                    active={sort.key === 'note'}
+                    dir={sort.dir}
+                    onClick={() => toggle('note')}
+                  />
+                  <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-ink/45">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((alert) => (
+                {displayAlerts.map((alert) => (
                   <tr
                     key={alert.id}
                     className="border-b border-[#e8f2fa] last:border-0 hover:bg-sky-soft/40"

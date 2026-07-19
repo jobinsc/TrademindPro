@@ -36,6 +36,7 @@ type NavItem = {
   exact?: boolean;
   /** Hide from non-admin users */
   adminOnly?: boolean;
+  children?: NavItem[];
 };
 
 type NavGroup = {
@@ -86,10 +87,38 @@ const navGroups: NavGroup[] = [
   {
     title: 'AI Agent System',
     items: [
-      { href: '/app/nejoic', label: 'Nejoic (Nifty)', icon: Sparkles, adminOnly: true },
-      { href: '/app/nejoic/settings', label: 'Nejoic Settings', icon: Settings, adminOnly: true },
-      { href: '/app/jimbo', label: 'Jimbo (Stocks)', icon: LineChart, adminOnly: true },
-      { href: '/app/jimbo/settings', label: 'Jimbo Settings', icon: Settings, adminOnly: true },
+      {
+        href: '/app/nejoic',
+        label: 'Nejoic (Nifty)',
+        icon: Sparkles,
+        adminOnly: true,
+        exact: true,
+        children: [
+          {
+            href: '/app/nejoic/settings',
+            label: 'Settings',
+            icon: Settings,
+            adminOnly: true,
+            exact: true,
+          },
+        ],
+      },
+      {
+        href: '/app/jimbo',
+        label: 'Jimbo (Stocks)',
+        icon: LineChart,
+        adminOnly: true,
+        exact: true,
+        children: [
+          {
+            href: '/app/jimbo/settings',
+            label: 'Settings',
+            icon: Settings,
+            adminOnly: true,
+            exact: true,
+          },
+        ],
+      },
       { href: '/app/ai', label: 'AI Agents Hub', icon: Bot },
     ],
   },
@@ -104,23 +133,26 @@ function NavLink({
   label,
   icon: Icon,
   active,
+  nested,
 }: {
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   active: boolean;
+  nested?: boolean;
 }) {
   return (
     <Link
       href={href}
       className={cn(
-        'relative flex items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium transition',
+        'relative flex items-center gap-2.5 rounded-xl py-2 text-[13px] font-medium transition',
+        nested ? 'px-3 pl-9' : 'px-3',
         active
           ? 'bg-sky-mist text-sky-deep shadow-[inset_3px_0_0_0_#1a6ba8]'
           : 'text-sky-ink/65 hover:bg-sky-soft hover:text-sky-ink'
       )}
     >
-      <Icon className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+      <Icon className={cn('shrink-0', nested ? 'h-3.5 w-3.5' : 'h-4 w-4')} strokeWidth={1.75} />
       <span>{label}</span>
     </Link>
   );
@@ -148,7 +180,12 @@ export default function AppSidebar() {
     })
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => !item.adminOnly || isAdmin),
+      items: group.items
+        .filter((item) => !item.adminOnly || isAdmin)
+        .map((item) => ({
+          ...item,
+          children: item.children?.filter((c) => !c.adminOnly || isAdmin),
+        })),
     }))
     .filter((group) => group.items.length > 0);
 
@@ -187,11 +224,28 @@ export default function AppSidebar() {
             </p>
             <div className="space-y-0.5">
               {group.items.map((item) => (
-                <NavLink
-                  key={item.href}
-                  {...item}
-                  active={isActive(item.href, item.exact)}
-                />
+                <div key={item.href}>
+                  <NavLink
+                    href={item.href}
+                    label={item.label}
+                    icon={item.icon}
+                    active={isActive(item.href, item.exact)}
+                  />
+                  {item.children && item.children.length > 0 && (
+                    <div className="mt-0.5 space-y-0.5 border-l border-[#cfe0ee] ml-5">
+                      {item.children.map((child) => (
+                        <NavLink
+                          key={child.href}
+                          href={child.href}
+                          label={child.label}
+                          icon={child.icon}
+                          nested
+                          active={isActive(child.href, child.exact)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
           </div>

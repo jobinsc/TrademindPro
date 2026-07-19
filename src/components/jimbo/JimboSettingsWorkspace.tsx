@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, LineChart, Save } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { LineChart, Save } from 'lucide-react';
 import { useJimbo } from '@/hooks/useJimbo';
 import {
   defaultJimboSettings,
@@ -10,11 +11,14 @@ import {
   JIMBO_UNIVERSE,
   type JimboSettings,
 } from '@/lib/jimbo';
+import { getReturnPath } from '@/lib/nav-return';
+import BackToLink from '@/components/ui/BackToLink';
 
 const inputClass =
   'w-full rounded-xl border border-[#cfe0ee] bg-white px-3 py-2.5 text-sm text-sky-ink outline-none focus:ring-2 focus:ring-sky-mid/30';
 
 export default function JimboSettingsWorkspace() {
+  const router = useRouter();
   const { ready, settings, updateSettings } = useJimbo();
   const [form, setForm] = useState<JimboSettings>(defaultJimboSettings());
   const [saved, setSaved] = useState(false);
@@ -55,18 +59,14 @@ export default function JimboSettingsWorkspace() {
       mode: 'paper',
     });
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    const from = new URLSearchParams(window.location.search).get('from');
+    const back = getReturnPath('/app/jimbo', from);
+    setTimeout(() => router.push(back), 450);
   }
 
   return (
     <div className="mx-auto w-full max-w-[720px] px-5 py-7 md:px-8 md:py-9">
-      <Link
-        href="/app/jimbo"
-        className="inline-flex items-center gap-1.5 text-sm font-semibold text-sky-deep hover:underline"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Back to {JIMBO_NAME}
-      </Link>
+      <BackToLink fallback="/app/jimbo" label={`Back to ${JIMBO_NAME}`} />
 
       <div className="mt-4 flex items-start gap-3">
         <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-soft text-sky-deep">
@@ -224,7 +224,7 @@ export default function JimboSettingsWorkspace() {
             <span className="text-sm font-semibold text-emerald-600">Saved</span>
           )}
           <Link
-            href="/app/nejoic/settings"
+            href="/app/nejoic/settings?from=%2Fapp%2Fjimbo%2Fsettings"
             className="text-sm font-semibold text-sky-ink/45 hover:text-sky-deep"
           >
             Open Nejoic settings →

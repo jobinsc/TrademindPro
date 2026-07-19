@@ -15,6 +15,7 @@ import {
 import InfoBubble from '@/components/ui/InfoBubble';
 import { useBroker } from '@/hooks/useBroker';
 import { BROKER_OPTIONS, type BrokerId } from '@/lib/broker';
+import { pushCloudData } from '@/lib/cloud-sync';
 import { formatCurrency } from '@/lib/utils';
 
 export default function TerminalWorkspace() {
@@ -60,6 +61,7 @@ export default function TerminalWorkspace() {
       markUpstoxConnected();
       setSavedMsg('Upstox connected — live login OK');
       setError('');
+      void pushCloudData();
     } else if (status === 'error') {
       setError(searchParams.get('message') || 'Upstox login failed');
     }
@@ -147,17 +149,17 @@ export default function TerminalWorkspace() {
           </div>
           <p className="mt-1 text-[12px] text-sky-ink/45">
             Use <strong className="font-semibold text-sky-ink/70">Login with Upstox</strong> for
-            real market data. App keys stay in <code className="text-[11px]">.env.local</code>.
+            real market data. Upstox requires a fresh login each trading day (~3:30 AM IST expiry).
           </p>
 
           <div className="mt-4 rounded-xl border border-[#cfe0ee] bg-sky-soft/60 p-4">
             <p className="text-sm font-semibold text-sky-ink">Upstox (recommended · free)</p>
             <p className="mt-1 text-[12px] text-sky-ink/55">
               {upstoxReady === null
-                ? 'Checking .env.local…'
+                ? 'Checking Upstox setup…'
                 : upstoxReady
-                  ? 'API keys found. Click below to authorize your Upstox account.'
-                  : 'Add UPSTOX_API_KEY + SECRET to .env.local and restart the app.'}
+                  ? 'Keys are ready on the server. Click Login with Upstox (once per day).'
+                  : 'Upstox keys missing on server — contact admin / check Vercel env.'}
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               {!connection.connected || connection.brokerId !== 'upstox' ? (

@@ -22,13 +22,29 @@ export default function AdminConsole() {
   const [message, setMessage] = useState('');
 
   const reload = useCallback(() => {
-    setUsers(listUsersForAdmin());
+    void listUsersForAdmin().then(setUsers);
   }, []);
 
   useEffect(() => {
     if (!ready) return;
     if (!isAdmin) return;
     reload();
+    // Remove leftover test accounts (keep Jobin + Jeril)
+    void (async () => {
+      try {
+        const res = await fetch('/api/admin/purge-users', {
+          method: 'POST',
+          credentials: 'include',
+        });
+        const data = (await res.json()) as { ok?: boolean; removed?: string[] };
+        if (res.ok && data.ok && (data.removed?.length || 0) > 0) {
+          flash(`Removed ${data.removed!.length} test account(s)`);
+          reload();
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
   }, [ready, isAdmin, reload]);
 
   if (!ready) {
@@ -62,9 +78,9 @@ export default function AdminConsole() {
     setTimeout(() => setMessage(''), 2500);
   }
 
-  function handleBlock(target: AuthUser, blocked: boolean) {
+  async function handleBlock(target: AuthUser, blocked: boolean) {
     if (!user) return;
-    const result = setUserBlocked(user.id, target.id, blocked);
+    const result = await setUserBlocked(user.id, target.id, blocked);
     if (!result.ok) {
       alert(result.error);
       return;
@@ -73,10 +89,10 @@ export default function AdminConsole() {
     flash(blocked ? `${target.name} blocked` : `${target.name} unblocked`);
   }
 
-  function handleDelete(target: AuthUser) {
+  async function handleDelete(target: AuthUser) {
     if (!user) return;
     if (!window.confirm(`Delete account for ${target.name} (${target.email})?`)) return;
-    const result = deleteUserAccount(user.id, target.id);
+    const result = await deleteUserAccount(user.id, target.id);
     if (!result.ok) {
       alert(result.error);
       return;
@@ -85,15 +101,15 @@ export default function AdminConsole() {
     flash(`${target.name} deleted`);
   }
 
-  function handleRole(target: AuthUser, role: UserRole) {
+  async function handleRole(target: AuthUser, role: UserRole) {
     if (!user) return;
-    const result = setUserRole(user.id, target.id, role);
+    const result = await setUserRole(user.id, target.id, role);
     if (!result.ok) {
       alert(result.error);
       return;
     }
     reload();
-    refreshUser();
+    void refreshUser();
     flash(`${target.name} is now ${role}`);
   }
 
@@ -250,8 +266,32 @@ export default function AdminConsole() {
       </div>
 
       <p className="mt-4 text-[12px] text-sky-ink/45">
-        Tip: Sign up with name or email containing <strong>jobin</strong> to get admin automatically.
-        First account on this browser is also admin.{' '}
+        Only real accounts should appear here. Jobin is admin; Jeril is a user.{' '}
+        <button
+          type="button"
+          className="font-semibold text-sky-deep hover:underline"
+          onClick={async () => {
+            if (!window.confirm('Remove all test accounts? Keep only Jobin + Jeril.')) return;
+            const res = await fetch('/api/admin/purge-users', {
+              method: 'POST',
+              credentials: 'include',
+            });
+            const data = (await res.json()) as {
+              ok?: boolean;
+              removed?: string[];
+              error?: string;
+            };
+            if (!res.ok || !data.ok) {
+              alert(data.error || 'Cleanup failed');
+              return;
+            }
+            flash(`Removed ${(data.removed || []).length} test account(s)`);
+            reload();
+          }}
+        >
+          Clean test accounts now
+        </button>
+        {' · '}
         <Link href="/app" className="font-semibold text-sky-deep hover:underline">
           Dashboard
         </Link>

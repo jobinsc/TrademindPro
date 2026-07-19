@@ -114,18 +114,18 @@ export default function DashboardSnapshot() {
           >
             <div className="flex items-center gap-2 text-sky-mid">
               <item.icon className="h-4 w-4" strokeWidth={1.75} />
-              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-ink/40">
+              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-sky-ink">
                 {item.label}
               </p>
             </div>
-            <p className="mt-2 font-display text-2xl font-semibold text-sky-ink">{item.value}</p>
-            <p className="mt-0.5 text-[11px] text-sky-ink/45">{item.sub}</p>
+            <p className="mt-2 font-display text-2xl font-bold text-sky-ink">{item.value}</p>
+            <p className="mt-0.5 text-[11px] font-semibold text-sky-ink">{item.sub}</p>
           </Link>
         ))}
       </div>
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#cfe0ee]/90 bg-white px-4 py-3">
-        <p className="text-sm text-sky-ink/65">
+        <p className="text-sm font-semibold text-sky-ink">
           Realized journal P&L:{' '}
           <strong
             className={

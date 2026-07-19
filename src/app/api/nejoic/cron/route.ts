@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { defaultNejoicSettings } from '@/lib/nejoic';
 import { buildLivePulse, parseTimeframe } from '@/lib/nejoic-pulse';
+import { deskForcedTimeframe, deskLabel, getActiveDesk } from '@/lib/market-desk';
 import { broadcastTelegram, telegramConfigured } from '@/lib/telegram';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * Cron: push Live Pulse every run (default every 3 minutes via vercel.json).
- * Auth: CRON_SECRET / TELEGRAM_WEBHOOK_SECRET (query ?secret= or Bearer).
+ * Cron backup: desk-aware Live Pulse → Telegram.
+ * After hours = Gold 15m only · Weekend = BTC 15m only · India = Nifty.
  */
 export async function GET(req: NextRequest) {
   const secret =
@@ -24,12 +25,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'Telegram not configured' });
   }
 
-  const tf = parseTimeframe(req.nextUrl.searchParams.get('tf') || '5m');
+  const desk = getActiveDesk();
+  const forced = deskForcedTimeframe(desk);
+  const tf = parseTimeframe(forced || req.nextUrl.searchParams.get('tf') || '5m');
   const settings = defaultNejoicSettings();
   const pulse = await buildLivePulse(tf, settings);
 
   if (!pulse.ok || !pulse.text) {
-    return NextResponse.json({ ok: false, error: pulse.error || 'No pulse' });
+    return NextResponse.json({ ok: false, error: pulse.error || 'No pulse', desk });
   }
 
   const result = await broadcastTelegram(pulse.text);
@@ -37,7 +40,11 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ok: result.ok,
     sent: result.sent,
+    desk,
+    deskLabel: deskLabel(desk),
+    timeframe: tf,
     decision: pulse.decision,
+    asset: pulse.asset,
     error: result.error,
   });
 }

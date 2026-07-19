@@ -74,5 +74,17 @@ export function useHoldings() {
     [persist]
   );
 
-  return { holdings, ready, addHolding, updateHolding, deleteHolding };
+  const patchLtps = useCallback(
+    (updates: { id: string; ltp: number }[]) => {
+      if (!updates.length) return;
+      const map = new Map(updates.map((u) => [u.id, u.ltp]));
+      const next = readHoldings().map((h) =>
+        map.has(h.id) ? { ...h, ltp: map.get(h.id)! } : h
+      );
+      persist(next);
+    },
+    [persist]
+  );
+
+  return { holdings, ready, addHolding, updateHolding, deleteHolding, patchLtps };
 }

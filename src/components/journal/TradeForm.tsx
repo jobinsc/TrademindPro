@@ -5,14 +5,17 @@ import {
   EMOTIONS,
   SEGMENTS,
   STRATEGIES,
+  TRADE_STYLES,
   calcPnL,
   todayISO,
   type TradeInput,
   type TradeSide,
   type TradeSegment,
+  type TradeStyle,
   type TradeEmotion,
 } from '@/lib/trades';
 import { formatCurrency } from '@/lib/utils';
+import SymbolAutocomplete from '@/components/ui/SymbolAutocomplete';
 
 export default function TradeForm({
   initial,
@@ -104,8 +107,11 @@ export default function TradeForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       {mode === 'full' && (
         <p className="rounded-xl bg-sky-soft px-3 py-2.5 text-[13px] leading-relaxed text-sky-ink/65">
-          Bought today and still holding? Leave it <strong className="font-semibold text-sky-ink">Open</strong>.
-          Add exit only when you sell (profit, stop-loss, or target). You can log the same stock again at a different price anytime.
+          <strong className="font-semibold text-sky-ink">Journal</strong> = trades you buy/sell
+          (intraday, swing, positional).{' '}
+          <strong className="font-semibold text-sky-ink">Holdings</strong> = delivery portfolio
+          book — different module. Bought today and still holding? Leave it{' '}
+          <strong className="font-semibold text-sky-ink">Open</strong>. Add exit only when you sell.
         </p>
       )}
 
@@ -116,10 +122,11 @@ export default function TradeForm({
       )}
 
       <Field label="Symbol">
-        <input
+        <SymbolAutocomplete
           value={form.symbol}
-          onChange={(e) => set('symbol', e.target.value.toUpperCase())}
-          placeholder="RELIANCE"
+          onChange={(symbol) => set('symbol', symbol)}
+          onPick={(item) => set('symbol', item.symbol)}
+          placeholder="Search NSE/BSE scrips…"
           className={inputClass}
           required
           readOnly={readOnlyEntry}
@@ -153,6 +160,24 @@ export default function TradeForm({
           </select>
         </Field>
       </div>
+
+      <Field label="Trade style">
+        <select
+          value={form.style || 'swing'}
+          onChange={(e) => set('style', e.target.value as TradeStyle)}
+          className={inputClass}
+          disabled={readOnlyEntry}
+        >
+          {TRADE_STYLES.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.label} — {s.hint}
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-[11px] font-medium text-sky-ink/45">
+          Analytics splits Intraday · Swing · Positional separately.
+        </p>
+      </Field>
 
       <div className="grid grid-cols-2 gap-3">
         <Field label="Entry date">

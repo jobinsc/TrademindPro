@@ -1,6 +1,20 @@
 import { analyzeNifty, type Candle, type NejoicSettings, type OptionBias } from '@/lib/nejoic';
-import { fetchNiftyCandles, type YahooInterval } from '@/lib/yahoo-nifty';
-import { normalizeTimeframeId, timeframeToYahoo } from '@/lib/nejoic-options';
+import { fetchNiftyCandles, fetchYahooCandles, type YahooInterval } from '@/lib/yahoo-nifty';
+import {
+  normalizeStrategyIds,
+  normalizeTimeframeId,
+  strategyLabel,
+  timeframeToYahoo,
+} from '@/lib/nejoic-options';
+import {
+  deskForcedTimeframe,
+  deskLabel,
+  getActiveDesk,
+  isIndiaCashSession,
+  isIndiaLunch,
+  istClock,
+  type MarketDesk,
+} from '@/lib/market-desk';
 
 export type PulseDecision = 'WAIT' | 'BUY_CE' | 'BUY_PE';
 
@@ -45,6 +59,8 @@ export type TradePlan = {
 
 export type LivePulse = {
   at: string;
+  desk: MarketDesk;
+  asset: string;
   spot: number;
   changePts: number;
   sessionNote: string;
@@ -52,6 +68,7 @@ export type LivePulse = {
   focus: TfPulse;
   weekly: TfPulse | null;
   daily: TfPulse | null;
+  extras?: { name: string; spot: number; trend: string; changePct: number }[];
   decision: PulseDecision;
   decisionReason: string;
   buyCeIf: string[];
@@ -67,44 +84,6 @@ export type LivePulse = {
   ok: boolean;
   error?: string;
 };
-
-function istTime(d = new Date()) {
-  return d.toLocaleTimeString('en-IN', {
-    timeZone: 'Asia/Kolkata',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true,
-  });
-}
-
-function isLunchHour(d = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Kolkata',
-    hour: 'numeric',
-    minute: 'numeric',
-    hour12: false,
-  }).formatToParts(d);
-  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? 12);
-  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? 0);
-  const mins = hour * 60 + minute;
-  return mins >= 12 * 60 && mins < 13 * 60 + 30;
-}
-
-function isMarketHours(d = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Kolkata',
-    weekday: 'short',
-    hour: 'numeric',
-    minute: 'numeric',
-    hour12: false,
-  }).formatToParts(d);
-  const wd = parts.find((p) => p.type === 'weekday')?.value ?? '';
-  if (wd === 'Sat' || wd === 'Sun') return false;
-  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? 0);
-  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? 0);
-  const mins = hour * 60 + minute;
-  return mins >= 9 * 60 + 15 && mins <= 15 * 60 + 30;
-}
 
 function round50(n: number) {
   return Math.round(n / 50) * 50;
@@ -209,6 +188,7 @@ function buildTf(
     setupStyle: settings?.setupStyle ?? 'strict_hl_lh',
     minConfidence: settings?.minConfidence ?? 70,
     strategyId: settings?.strategyId ?? 'price_action_hhll',
+    strategyIds: settings?.strategyIds,
     analysisStyle: settings?.analysisStyle ?? 'strict',
     emaFast: settings?.emaFast ?? 9,
     emaSlow: settings?.emaSlow ?? 21,
@@ -216,6 +196,7 @@ function buildTf(
     rsiOversold: settings?.rsiOversold ?? 30,
     rsiOverbought: settings?.rsiOverbought ?? 70,
     breakoutLookback: settings?.breakoutLookback ?? 20,
+    orbMinutes: settings?.orbMinutes ?? 15,
   });
   const labels = sig.labels.map((l) => ({ label: l.label, price: l.price }));
   const slice = candles.slice(-48);
@@ -496,74 +477,323 @@ function analyzeDecision(
   };
 }
 
-export function formatPulseText(p: LivePulse): string {
+export function formatPulseText(p: LivePulse, settings?: Partial<NejoicSettings>): string {
   const f = p.focus;
   const d = p.daily;
   const w = p.weekly;
   const plan = p.plan;
-  const pts = p.changePts >= 0 ? `+${p.changePts.toFixed(0)}` : `${p.changePts.toFixed(0)}`;
-  const action =
-    plan.action === 'BUY_CE'
-      ? 'BUY CE (paper)'
-      : plan.action === 'BUY_PE'
-        ? 'BUY PE (paper)'
-        : 'WAIT — no force';
+  const pts = p.changePts >= 0 ? `+${p.changePts.toFixed(2)}` : `${p.changePts.toFixed(2)}`;
+  const desk = p.desk || 'INDIA';
 
-  return [
-    `NEJOIC TRADE DESK · NIFTY`,
-    `${istTime()} IST · Spot ₹${p.spot.toFixed(2)} (${pts}) · Focus ${f.tf}`,
-    ``,
-    `1) VERDICT`,
-    `Action: ${action}`,
-    `Conviction: ${plan.conviction} · Score ${p.scorePct}% (${p.fired}/${p.total})`,
-    `Why: ${plan.why}`,
-    `${p.decisionReason}`,
-    ``,
-    `2) MULTI-TIMEFRAME BIAS`,
-    `• ${f.tf}: ${f.trend} · ${f.pattern}`,
-    `  Path: ${f.structurePath}`,
-    `  Momentum: ${f.momentum} · Range position: ${f.rangePos}% · ATR: ${f.atr.toFixed(1)}`,
-    `• Daily: ${d ? `${d.trend} · ${d.pattern}` : 'n/a'}`,
-    `• Weekly: ${w ? `${w.trend} · ${w.pattern}` : 'n/a'}`,
-    ``,
-    `3) KEY MAP (use these numbers)`,
-    `• Nearest zone: ${f.nearestZone}`,
-    `• Focus support / resistance: ${f.support != null ? `₹${f.support.toFixed(2)}` : '—'} / ${f.resistance != null ? `₹${f.resistance.toFixed(2)}` : '—'}`,
-    `• Swings HH/HL: ${f.lastHH != null ? `₹${f.lastHH.toFixed(2)}` : '—'} / ${f.lastHL != null ? `₹${f.lastHL.toFixed(2)}` : '—'}`,
-    `• Swings LH/LL: ${f.lastLH != null ? `₹${f.lastLH.toFixed(2)}` : '—'} / ${f.lastLL != null ? `₹${f.lastLL.toFixed(2)}` : '—'}`,
-    `• Session H / L / Pivot: ₹${f.dayHigh.toFixed(2)} / ₹${f.dayLow.toFixed(2)} / ₹${f.pivot.toFixed(2)}`,
-    `• Daily R / S: ${d?.resistance != null ? `₹${d.resistance.toFixed(2)}` : d ? `₹${d.dayHigh.toFixed(2)}` : '—'} / ${d?.support != null ? `₹${d.support.toFixed(2)}` : d ? `₹${d.dayLow.toFixed(2)}` : '—'}`,
-    `• Weekly R / S: ${w?.resistance != null ? `₹${w.resistance.toFixed(2)}` : '—'} / ${w?.support != null ? `₹${w.support.toFixed(2)}` : '—'}`,
-    ``,
-    `4) CANDLE CONTEXT (last 3)`,
-    ...f.candleStory.map((line) => `• ${line}`),
-    ``,
-    `5) CONFLUENCE`,
-    ...(p.confluence.length ? p.confluence.map((x) => `+ ${x}`) : ['+ none strong']),
-    ``,
-    `6) CONFLICTS / RISK`,
-    ...(p.conflicts.length ? p.conflicts.map((x) => `- ${x}`) : ['- none major']),
-    ``,
-    `7) TRADE PLAN (read this before clicking)`,
-    `• Entry trigger: ${plan.entryTrigger}`,
-    `• Invalidation: ${plan.invalidation}`,
-    `• ${plan.target1}`,
-    `• ${plan.target2}`,
-    `• Contract idea: ${plan.suggestedSide === 'NONE' ? `ATM ${plan.suggestedStrike} (side TBD)` : `ATM ${plan.suggestedStrike} ${plan.suggestedSide}`}`,
-    `• ${plan.riskNote}`,
-    `• Timing: ${plan.whenToAct}`,
-    ``,
-    `8) BOTH-SIDE CHECKLIST (if you still want flexibility)`,
-    `CE only if:`,
-    ...p.buyCeIf.map((x) => `  · ${x}`),
-    `PE only if:`,
-    ...p.buyPeIf.map((x) => `  · ${x}`),
-    ``,
-    `Rule: no close confirmation = no paper trade. Nejoic · paper only.`,
-  ].join('\n');
+  let body = '';
+
+  if (desk === 'GOLD' || desk === 'BTC') {
+    const action =
+      plan.action === 'BUY_CE'
+        ? 'LONG bias (paper)'
+        : plan.action === 'BUY_PE'
+          ? 'SHORT bias (paper)'
+          : 'WAIT — no force';
+    const title =
+      desk === 'GOLD'
+        ? `NEJOIC · GOLD (${f.tf})`
+        : `NEJOIC · BTC (${f.tf})`;
+
+    body = [
+      title,
+      `${istClock()} IST · ${deskLabel(desk)}`,
+      `${p.asset} @ ${p.spot.toFixed(2)} (${pts}) · Focus ${f.tf}`,
+      ``,
+      `1) VERDICT`,
+      `Action: ${action}`,
+      `Conviction: ${plan.conviction} · Score ${p.scorePct}%`,
+      `Why: ${plan.why}`,
+      `${p.decisionReason}`,
+      ``,
+      `2) ${p.asset} MAP (${f.tf})`,
+      `• Trend: ${f.trend} · ${f.pattern} · Momentum ${f.momentum}`,
+      `• Support / Resistance: ${f.support != null ? f.support.toFixed(2) : '—'} / ${f.resistance != null ? f.resistance.toFixed(2) : '—'}`,
+      `• Zone: ${f.nearestZone}`,
+      `• Path: ${f.structurePath}`,
+      ``,
+      `3) PLAN`,
+      `• Entry: ${plan.entryTrigger}`,
+      `• Invalidation: ${plan.invalidation}`,
+      `• ${plan.target1}`,
+      `• ${plan.target2}`,
+      `• ${plan.riskNote}`,
+      `• Timing: ${plan.whenToAct}`,
+    ].join('\n');
+  } else {
+    const action =
+      plan.action === 'BUY_CE'
+        ? 'BUY CE (paper)'
+        : plan.action === 'BUY_PE'
+          ? 'BUY PE (paper)'
+          : 'WAIT — no force';
+
+    body = [
+      `NEJOIC INDIA DESK · NIFTY (${f.tf})`,
+      `${istClock()} IST · Spot ₹${p.spot.toFixed(2)} (${pts}) · Focus ${f.tf}`,
+      `Session: ${deskLabel('INDIA')}`,
+      ``,
+      `1) VERDICT`,
+      `Action: ${action}`,
+      `Conviction: ${plan.conviction} · Score ${p.scorePct}% (${p.fired}/${p.total})`,
+      `Why: ${plan.why}`,
+      `${p.decisionReason}`,
+      ``,
+      `2) MULTI-TIMEFRAME BIAS`,
+      `• ${f.tf}: ${f.trend} · ${f.pattern}`,
+      `  Path: ${f.structurePath}`,
+      `  Momentum: ${f.momentum} · Range position: ${f.rangePos}% · ATR: ${f.atr.toFixed(1)}`,
+      `• Daily: ${d ? `${d.trend} · ${d.pattern}` : 'n/a'}`,
+      `• Weekly: ${w ? `${w.trend} · ${w.pattern}` : 'n/a'}`,
+      ``,
+      `3) KEY MAP`,
+      `• Nearest zone: ${f.nearestZone}`,
+      `• Focus S / R: ${f.support != null ? `₹${f.support.toFixed(2)}` : '—'} / ${f.resistance != null ? `₹${f.resistance.toFixed(2)}` : '—'}`,
+      `• Session H / L / Pivot: ₹${f.dayHigh.toFixed(2)} / ₹${f.dayLow.toFixed(2)} / ₹${f.pivot.toFixed(2)}`,
+      ``,
+      `4) CANDLE CONTEXT (last 3)`,
+      ...f.candleStory.map((line) => `• ${line}`),
+      ``,
+      `5) CONFLUENCE`,
+      ...(p.confluence.length ? p.confluence.map((x) => `+ ${x}`) : ['+ none strong']),
+      ``,
+      `6) CONFLICTS / RISK`,
+      ...(p.conflicts.length ? p.conflicts.map((x) => `- ${x}`) : ['- none major']),
+      ``,
+      `7) TRADE PLAN`,
+      `• Entry trigger: ${plan.entryTrigger}`,
+      `• Invalidation: ${plan.invalidation}`,
+      `• ${plan.target1}`,
+      `• ${plan.target2}`,
+      `• Contract: ${plan.suggestedSide === 'NONE' ? `ATM ${plan.suggestedStrike}` : `ATM ${plan.suggestedStrike} ${plan.suggestedSide}`}`,
+      `• ${plan.riskNote}`,
+      `• Timing: ${plan.whenToAct}`,
+      ``,
+      `Rule: no close confirmation = no paper trade. Nejoic · paper only.`,
+    ].join('\n');
+  }
+
+  if (settings?.telegramIncludeStudies !== false) {
+    body += `\n\n${formatStudyBlock(p, settings)}`;
+  }
+  return body;
 }
 
+function formatStudyBlock(p: LivePulse, settings?: Partial<NejoicSettings>): string {
+  const s = settings || {};
+  const ids = normalizeStrategyIds(s.strategyIds, s.strategyId);
+  const lines = [
+    `STUDIES (controls this Telegram report)`,
+    `• Instrument: ${p.asset}`,
+    `• Timeframe: ${p.focus.tf}`,
+    `• Strategies: ${ids.map(strategyLabel).join(', ')}`,
+    `• Style: ${s.analysisStyle || 'strict'} · Min confidence: ${s.minConfidence ?? 70}%`,
+    `• HH/LL bars: L${s.leftBars ?? 5} / R${s.rightBars ?? 5}`,
+  ];
+  if (ids.includes('ema_cross')) {
+    lines.push(`• EMA: ${s.emaFast ?? 9} / ${s.emaSlow ?? 21}`);
+  }
+  if (ids.includes('rsi_bounce')) {
+    lines.push(
+      `• RSI: period ${s.rsiPeriod ?? 14} · OS ${s.rsiOversold ?? 30} · OB ${s.rsiOverbought ?? 70}`
+    );
+  }
+  if (ids.includes('breakout')) {
+    lines.push(`• Breakout lookback: ${s.breakoutLookback ?? 20}`);
+  }
+  if (ids.includes('orb')) {
+    lines.push(`• ORB minutes: ${s.orbMinutes ?? 15}`);
+  }
+  lines.push(`• Delivery: Alerts → Telegram · Maths: Nejoic Settings.`);
+  return lines.join('\n');
+}
+
+export type PulseInstrument = 'AUTO' | 'NIFTY' | 'GOLD' | 'BTC';
+
 export async function buildLivePulse(
+  focusTfRaw: string = '5m',
+  settings?: Partial<NejoicSettings>,
+  opts?: { instrument?: PulseInstrument }
+): Promise<LivePulse> {
+  const instrument = (opts?.instrument ||
+    settings?.telegramInstrument ||
+    'AUTO') as PulseInstrument;
+
+  const resolveAuto = (): PulseInstrument => {
+    const desk = getActiveDesk();
+    if (desk === 'GOLD') return 'GOLD';
+    if (desk === 'BTC') return 'BTC';
+    return 'NIFTY';
+  };
+
+  const target = instrument === 'AUTO' ? resolveAuto() : instrument;
+
+  // Telegram / user TF wins; AUTO desk still picks the asset but respects chosen TF.
+  const tf =
+    settings?.telegramTimeframe ||
+    focusTfRaw ||
+    (target !== 'NIFTY' ? deskForcedTimeframe(target === 'GOLD' ? 'GOLD' : 'BTC') : null) ||
+    settings?.primaryTimeframe ||
+    '15m';
+
+  let pulse: LivePulse;
+  if (target === 'GOLD') {
+    pulse = await buildSingleAssetPulse('GOLD', 'GC=F', 'Gold', String(tf), settings);
+  } else if (target === 'BTC') {
+    pulse = await buildSingleAssetPulse('BTC', 'BTC-USD', 'Bitcoin', String(tf), settings);
+  } else {
+    pulse = await buildIndiaPulse(String(tf), settings);
+  }
+  pulse.text = formatPulseText(pulse, settings);
+  return pulse;
+}
+
+async function buildSingleAssetPulse(
+  asset: 'GOLD' | 'BTC',
+  yahooSymbol: string,
+  label: string,
+  focusTfRaw: string,
+  settings?: Partial<NejoicSettings>
+): Promise<LivePulse> {
+  const desk: MarketDesk = asset === 'GOLD' ? 'GOLD' : 'BTC';
+  const focusId = normalizeTimeframeId(focusTfRaw);
+  const focusYahoo = timeframeToYahoo(focusId) as YahooInterval;
+
+  const [focusFetch, dailyFetch] = await Promise.all([
+    fetchYahooCandles(yahooSymbol, focusYahoo, 120, label),
+    fetchYahooCandles(yahooSymbol, '1d', 80, label),
+  ]);
+
+  const emptyFocus = (tf: string): TfPulse => ({
+    tf,
+    spot: 0,
+    trend: 'FLAT',
+    pattern: '—',
+    structurePath: '—',
+    lastHH: null,
+    lastHL: null,
+    lastLH: null,
+    lastLL: null,
+    support: null,
+    resistance: null,
+    bias: 'FLAT',
+    setup: 'NO_DATA',
+    confidence: 0,
+    dayHigh: 0,
+    dayLow: 0,
+    pivot: 0,
+    atr: 0,
+    rangePos: 50,
+    momentum: 'MIXED',
+    candleStory: [],
+    nearestZone: '—',
+  });
+
+  if (!focusFetch.ok || focusFetch.candles.length < 10) {
+    const failPlan: TradePlan = {
+      action: 'WAIT',
+      conviction: 'LOW',
+      why: `No ${asset} feed`,
+      entryTrigger: '—',
+      invalidation: '—',
+      target1: '—',
+      target2: '—',
+      suggestedStrike: 0,
+      suggestedSide: 'NONE',
+      riskNote: focusFetch.error || 'No data',
+      whenToAct: 'Retry Pulse',
+    };
+    const fail: LivePulse = {
+      at: new Date().toISOString(),
+      desk,
+      asset,
+      spot: 0,
+      changePts: 0,
+      sessionNote: `${asset} feed unavailable.`,
+      proRead: `Could not load ${label} (${focusId}).`,
+      focus: emptyFocus(focusId),
+      weekly: null,
+      daily: null,
+      extras: [],
+      decision: 'WAIT',
+      decisionReason: focusFetch.error || 'No data',
+      buyCeIf: [],
+      buyPeIf: [],
+      plan: failPlan,
+      confluence: [],
+      conflicts: ['Data feed failed'],
+      scorePct: 0,
+      scoreLabel: 'LOW',
+      fired: 0,
+      total: 24,
+      text: '',
+      ok: false,
+      error: focusFetch.error || 'No data',
+    };
+    fail.text = formatPulseText(fail, settings);
+    return fail;
+  }
+
+  const focus = buildTf(focusId, focusFetch.candles, focusFetch.spot, settings);
+  const daily = dailyFetch.ok
+    ? buildTf('1D', dailyFetch.candles, dailyFetch.spot, settings)
+    : null;
+  const prev = focusFetch.prevClose ?? focusFetch.candles[0]?.close ?? focus.spot;
+  const changePts = Math.round((focus.spot - prev) * 100) / 100;
+
+  const dec = analyzeDecision(focus, daily, null, false, true);
+  const scoreLabel: LivePulse['scoreLabel'] =
+    dec.scorePct >= 62 ? 'HIGH' : dec.scorePct >= 42 ? 'MEDIUM' : 'LOW';
+  const plan = buildPlan(focus, daily, null, dec.decision, false, true, scoreLabel);
+
+  if (plan.action === 'BUY_CE') {
+    plan.why = `${asset} long bias · ${plan.why}`;
+    plan.suggestedSide = 'NONE';
+    plan.entryTrigger = plan.entryTrigger.replace(/CE/gi, 'LONG');
+  } else if (plan.action === 'BUY_PE') {
+    plan.why = `${asset} short bias · ${plan.why}`;
+    plan.suggestedSide = 'NONE';
+    plan.entryTrigger = plan.entryTrigger.replace(/PE/gi, 'SHORT');
+  }
+
+  const pulse: LivePulse = {
+    at: new Date().toISOString(),
+    desk,
+    asset,
+    spot: focus.spot,
+    changePts,
+    sessionNote: `${deskLabel(desk)} · ${focus.setup} · ${focus.confidence}%`,
+    proRead:
+      asset === 'GOLD'
+        ? `After hours: Gold only on 15m (${focus.trend}). ${dec.reason}`
+        : `Weekend: BTC only on 15m (${focus.trend}). ${dec.reason}`,
+    focus,
+    weekly: null,
+    daily,
+    extras: [],
+    decision: dec.decision,
+    decisionReason: dec.reason,
+    buyCeIf: dec.buyCeIf,
+    buyPeIf: dec.buyPeIf,
+    plan,
+    confluence: dec.confluence,
+    conflicts: dec.conflicts,
+    scorePct: dec.scorePct,
+    scoreLabel,
+    fired: dec.fired,
+    total: dec.total,
+    text: '',
+    ok: true,
+  };
+  pulse.text = formatPulseText(pulse, settings);
+  return pulse;
+}
+
+async function buildIndiaPulse(
   focusTfRaw: string = '5m',
   settings?: Partial<NejoicSettings>
 ): Promise<LivePulse> {
@@ -619,6 +849,8 @@ export async function buildLivePulse(
     };
     const fail: LivePulse = {
       at: new Date().toISOString(),
+      desk: 'INDIA',
+      asset: 'NIFTY',
       spot: 0,
       changePts: 0,
       sessionNote: 'Feed unavailable.',
@@ -641,7 +873,7 @@ export async function buildLivePulse(
       ok: false,
       error: focusFetch.error || 'No data',
     };
-    fail.text = formatPulseText(fail);
+    fail.text = formatPulseText(fail, settings);
     return fail;
   }
 
@@ -655,8 +887,8 @@ export async function buildLivePulse(
 
   const prev = focusFetch.prevClose ?? focusFetch.candles[0]?.close ?? focus.spot;
   const changePts = Math.round((focus.spot - prev) * 100) / 100;
-  const lunch = respectLunch && isLunchHour();
-  const marketOpen = !onlySession || isMarketHours();
+  const lunch = respectLunch && isIndiaLunch();
+  const marketOpen = !onlySession || isIndiaCashSession();
   const dec = analyzeDecision(focus, daily, weekly, lunch, marketOpen);
 
   const scoreLabel: LivePulse['scoreLabel'] =
@@ -666,25 +898,23 @@ export async function buildLivePulse(
 
   const proRead = [
     `Focus ${focus.tf} is ${focus.trend.toLowerCase()} with ${focus.momentum.toLowerCase()} momentum.`,
-    `You are ${focus.rangePos}% through the recent range — nearest pressure is ${focus.nearestZone}.`,
+    `Nearest pressure: ${focus.nearestZone}.`,
     daily
-      ? `Daily is ${daily.trend.toLowerCase()}; ${
-          daily.trend === focus.trend
-            ? 'that supports trading with the focus trend.'
-            : 'that fights the focus trend — require stronger confirmation.'
-        }`
+      ? `Daily is ${daily.trend.toLowerCase()}.`
       : 'Daily map unavailable.',
     marketOpen
       ? lunch
-        ? 'Lunch filter on: prefer observation unless a clean close trigger prints.'
-        : 'Session open: only trade close-confirmed triggers from the plan below.'
-      : 'Session closed: treat this as a prep brief for the next open.',
+        ? 'Lunch window: observe unless a clean close trigger prints.'
+        : 'India session open — only trade close-confirmed triggers.'
+      : 'Outside India hours — this path should not run (desk switch).',
   ].join(' ');
 
   const sessionNote = `${focus.setup} · conf ${focus.confidence}% · ATR ${focus.atr.toFixed(0)} · ${focus.nearestZone}`;
 
   const pulse: LivePulse = {
     at: new Date().toISOString(),
+    desk: 'INDIA',
+    asset: 'NIFTY',
     spot: focus.spot,
     changePts,
     sessionNote,
@@ -706,7 +936,7 @@ export async function buildLivePulse(
     text: '',
     ok: true,
   };
-  pulse.text = formatPulseText(pulse);
+  pulse.text = formatPulseText(pulse, settings);
   return pulse;
 }
 

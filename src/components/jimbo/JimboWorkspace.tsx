@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import {
   Bot,
   Clock,
@@ -14,12 +15,14 @@ import {
 } from 'lucide-react';
 import { useJimbo } from '@/hooks/useJimbo';
 import { JIMBO_NAME, JIMBO_UNIVERSE } from '@/lib/jimbo';
+import { hrefWithFrom } from '@/lib/nav-return';
 import { formatCurrency } from '@/lib/utils';
 import { SortableTh, useSortable } from '@/components/ui/sortable';
 import FullStopBar from '@/components/trading/FullStopBar';
 import InfoBubble from '@/components/ui/InfoBubble';
 
 export default function JimboWorkspace() {
+  const pathname = usePathname();
   const {
     ready,
     settings,
@@ -99,7 +102,7 @@ export default function JimboWorkspace() {
             </InfoBubble>
           </div>
           <Link
-            href="/app/jimbo/settings"
+            href={hrefWithFrom('/app/jimbo/settings', pathname || '/app/jimbo')}
             className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-sky-deep hover:underline"
           >
             Jimbo Settings

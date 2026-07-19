@@ -21,11 +21,77 @@ import {
   type NejoicTrade,
   type Candle,
 } from '@/lib/nejoic';
-import { looksLikePulseAsk } from '@/lib/nejoic-options';
+import { looksLikePulseAsk, normalizeStrategyIds } from '@/lib/nejoic-options';
+import { getUpstoxAccessToken } from '@/lib/upstox-client';
 
 const KEY = 'trademindpro_nejoic_v1';
 const LAST_PULSE_DECISION_KEY = 'trademindpro_nejoic_last_tg_decision';
+const LAST_PULSE_SENT_AT_KEY = 'trademindpro_nejoic_last_tg_sent';
+const LAST_PULSE_FP_KEY = 'trademindpro_nejoic_last_tg_fp';
 const SYNC_EVENT = 'trademindpro-nejoic-sync';
+
+type LiveOptQuote = {
+  ok: boolean;
+  ltp: number;
+  instrumentKey?: string;
+  tradingSymbol?: string;
+  strike?: number;
+  expiry?: string;
+  source?: string;
+  error?: string;
+};
+
+async function fetchLiveOptionPremium(input: {
+  spot: number;
+  option: 'CE' | 'PE';
+  strike?: number;
+  instrumentKey?: string | null;
+}): Promise<LiveOptQuote> {
+  const token = getUpstoxAccessToken();
+  if (!token) {
+    return { ok: false, ltp: 0, error: 'Upstox not connected' };
+  }
+  try {
+    const res = await fetch('/api/market/option-ltp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        spot: input.spot,
+        option: input.option,
+        strike: input.strike,
+        instrumentKey: input.instrumentKey || undefined,
+        expiry: 'current_week',
+      }),
+      cache: 'no-store',
+    });
+    const data = (await res.json()) as LiveOptQuote & { ok?: boolean };
+    if (!res.ok || !data.ok || !(data.ltp > 0)) {
+      return {
+        ok: false,
+        ltp: 0,
+        error: data.error || `HTTP ${res.status}`,
+      };
+    }
+    return {
+      ok: true,
+      ltp: data.ltp,
+      instrumentKey: data.instrumentKey,
+      tradingSymbol: data.tradingSymbol,
+      strike: data.strike,
+      expiry: data.expiry,
+      source: 'upstox',
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      ltp: 0,
+      error: e instanceof Error ? e.message : 'LTP fetch failed',
+    };
+  }
+}
 
 async function pushTelegram(text: string) {
   try {
@@ -62,8 +128,11 @@ function read(): NejoicState {
     if (!raw) return emptyState();
     const parsed = JSON.parse(raw) as Partial<NejoicState>;
     const base = emptyState();
+    const settings = { ...defaultNejoicSettings(), ...parsed.settings };
+    settings.strategyIds = normalizeStrategyIds(settings.strategyIds, settings.strategyId);
+    settings.strategyId = settings.strategyIds[0] ?? 'price_action_hhll';
     return {
-      settings: { ...defaultNejoicSettings(), ...parsed.settings },
+      settings,
       candles: Array.isArray(parsed.candles) && parsed.candles.length > 10 ? parsed.candles : base.candles,
       spot: typeof parsed.spot === 'number' ? parsed.spot : base.spot,
       signal: parsed.signal ?? null,
@@ -188,7 +257,7 @@ export function useNejoic() {
     }
 
     void pullLive();
-    const liveId = window.setInterval(() => void pullLive(), 30_000);
+    const liveId = window.setInterval(() => void pullLive(), 3000);
 
     const simId = window.setInterval(() => {
       if (feedLiveRef.current) return;
@@ -337,7 +406,7 @@ export function useNejoic() {
     [persist, pushEvent]
   );
 
-  const takeSignal = useCallback(() => {
+  const takeSignal = useCallback(async () => {
     const state = snapshot();
     const sig = state.signal ?? analyzeNifty(state.candles, analyzeOptsFromSettings(state.settings));
     const gate = canOpenTrade(state.settings, state.trades);
@@ -349,32 +418,58 @@ export function useNejoic() {
       persist(pushEvent('No trade — bias FLAT.', { ...state, signal: sig }));
       return null;
     }
-    const trade = openPaperTrade(sig, state.settings);
+
+    const live = await fetchLiveOptionPremium({
+      spot: sig.niftySpot || state.spot,
+      option: sig.bias,
+      strike: sig.strike,
+    });
+    const premium = live.ok ? live.ltp : sig.premium;
+    const strike = live.strike || sig.strike;
+    const enrichedSig = { ...sig, strike, premium };
+    const trade = openPaperTrade(enrichedSig, state.settings, {
+      premium,
+      instrumentKey: live.instrumentKey || null,
+      premiumSource: live.ok ? 'upstox' : 'estimate',
+      expiry: live.expiry || null,
+    });
     if (!trade) return null;
     let next: NejoicState = {
       ...state,
-      signal: sig,
+      signal: enrichedSig,
       trades: [...state.trades, trade],
       settings: { ...state.settings, status: 'trading', updatedAt: new Date().toISOString() },
     };
+    const src = live.ok ? 'Upstox LTP' : 'estimate (Upstox offline)';
     next = pushEvent(
-      `Opened paper BUY NIFTY ${trade.strike} ${trade.option} @ ₹${trade.entryPremium}`,
+      `Opened paper BUY NIFTY ${trade.strike} ${trade.option} @ ₹${trade.entryPremium} (${src})`,
       next
     );
     persist(next);
     if (state.settings.telegramNotify !== false) {
       void pushTelegram(
-        `📄 PAPER TRADE OPEN\nNIFTY ${trade.strike} ${trade.option}\nEntry ~₹${trade.entryPremium}\nLots ${trade.lots}\n(Nejoic · paper only)`
+        `📄 PAPER TRADE OPEN\nNIFTY ${trade.strike} ${trade.option}\nEntry ₹${trade.entryPremium} (${src})\nLots ${trade.lots}\n(Nejoic · paper only)`
       );
     }
     return trade;
   }, [snapshot, persist, pushEvent]);
 
-  const closeOpen = useCallback(() => {
+  const closeOpen = useCallback(async () => {
     const state = snapshot();
     const open = state.trades.find((t) => t.status === 'open');
     if (!open) return;
-    const closed = closePaperTrade(open, state.settings);
+
+    const live = await fetchLiveOptionPremium({
+      spot: state.spot || open.strike,
+      option: open.option,
+      strike: open.strike,
+      instrumentKey: open.instrumentKey,
+    });
+    const closed = closePaperTrade(
+      open,
+      state.settings,
+      live.ok ? live.ltp : null
+    );
     const trades = state.trades.map((t) => (t.id === open.id ? closed : t));
     let status = evaluateDayStatus({ ...state.settings, status: 'watching' }, trades);
     if (realizedToday(trades) >= state.settings.dailyProfitTarget) status = 'target_hit';
@@ -389,8 +484,9 @@ export function useNejoic() {
         updatedAt: new Date().toISOString(),
       },
     };
+    const src = live.ok ? 'Upstox LTP' : 'estimate';
     next = pushEvent(
-      `Closed ${closed.option} ${closed.strike} · P&L ₹${closed.pnl}`,
+      `Closed ${closed.option} ${closed.strike} @ ₹${closed.exitPremium} (${src}) · P&L ₹${closed.pnl}`,
       next
     );
     if (status === 'target_hit') {
@@ -402,7 +498,7 @@ export function useNejoic() {
     persist(next);
     if (state.settings.telegramNotify !== false) {
       void pushTelegram(
-        `📄 PAPER TRADE CLOSED\nNIFTY ${closed.strike} ${closed.option}\nP&L ₹${closed.pnl}\n(Nejoic · paper only)`
+        `📄 PAPER TRADE CLOSED\nNIFTY ${closed.strike} ${closed.option}\nExit ₹${closed.exitPremium} (${src})\nP&L ₹${closed.pnl}\n(Nejoic · paper only)`
       );
     }
   }, [snapshot, persist, pushEvent]);
@@ -416,137 +512,222 @@ export function useNejoic() {
     const id = window.setInterval(() => {
       if (autoRef.current) return;
       autoRef.current = true;
-      try {
-        const state = read();
-        if (!state.settings.autoTrade) return;
-        const pnl = realizedToday(state.trades);
-        const ignore = state.settings.ignoreDailyLimits;
-        if (
-          !ignore &&
-          (pnl >= state.settings.dailyProfitTarget ||
-            pnl <= -Math.abs(state.settings.dailyMaxLoss))
-        ) {
-          return;
-        }
-        const open = state.trades.find((t) => t.status === 'open');
-        if (open) {
-          // Hold ~2–4 ticks then close
-          const age = Date.now() - new Date(open.at).getTime();
-          if (age > 12_000) {
-            const closed = closePaperTrade(open, state.settings);
-            const trades = state.trades.map((t) => (t.id === open.id ? closed : t));
-            let status = evaluateDayStatus(state.settings, trades);
-            const day = realizedToday(trades);
-            if (!state.settings.ignoreDailyLimits) {
-              if (day >= state.settings.dailyProfitTarget) status = 'target_hit';
-              if (day <= -Math.abs(state.settings.dailyMaxLoss)) status = 'stopped_loss';
-            }
-            const next: NejoicState = {
-              ...state,
-              trades,
-              settings: {
-                ...state.settings,
-                status,
-                autoTrade:
-                  status === 'target_hit' || status === 'stopped_loss'
-                    ? false
-                    : state.settings.autoTrade,
-              },
-              events: [
-                ...state.events,
-                {
-                  id: crypto.randomUUID(),
-                  at: new Date().toISOString(),
-                  text: `Auto-closed ${closed.option} · ₹${closed.pnl}`,
-                },
-              ].slice(-80),
-            };
-            localStorage.setItem(KEY, JSON.stringify(next));
-            setTrades(next.trades);
-            setSettings(next.settings);
-            setEvents(next.events);
-            if (state.settings.telegramNotify !== false) {
-              void pushTelegram(
-                `📄 AUTO PAPER CLOSED\nNIFTY ${closed.strike} ${closed.option}\nP&L ₹${closed.pnl}`
-              );
-            }
+      void (async () => {
+        try {
+          const state = read();
+          if (!state.settings.autoTrade) return;
+          const pnl = realizedToday(state.trades);
+          const ignore = state.settings.ignoreDailyLimits;
+          if (
+            !ignore &&
+            (pnl >= state.settings.dailyProfitTarget ||
+              pnl <= -Math.abs(state.settings.dailyMaxLoss))
+          ) {
+            return;
           }
-          return;
-        }
+          const open = state.trades.find((t) => t.status === 'open');
+          if (open) {
+            const age = Date.now() - new Date(open.at).getTime();
+            if (age > 12_000) {
+              const live = await fetchLiveOptionPremium({
+                spot: state.spot || open.strike,
+                option: open.option,
+                strike: open.strike,
+                instrumentKey: open.instrumentKey,
+              });
+              const closed = closePaperTrade(
+                open,
+                state.settings,
+                live.ok ? live.ltp : null
+              );
+              const trades = state.trades.map((t) => (t.id === open.id ? closed : t));
+              let status = evaluateDayStatus(state.settings, trades);
+              const day = realizedToday(trades);
+              if (!state.settings.ignoreDailyLimits) {
+                if (day >= state.settings.dailyProfitTarget) status = 'target_hit';
+                if (day <= -Math.abs(state.settings.dailyMaxLoss)) status = 'stopped_loss';
+              }
+              const src = live.ok ? 'Upstox LTP' : 'estimate';
+              const next: NejoicState = {
+                ...state,
+                trades,
+                settings: {
+                  ...state.settings,
+                  status,
+                  autoTrade:
+                    status === 'target_hit' || status === 'stopped_loss'
+                      ? false
+                      : state.settings.autoTrade,
+                },
+                events: [
+                  ...state.events,
+                  {
+                    id: crypto.randomUUID(),
+                    at: new Date().toISOString(),
+                    text: `Auto-closed ${closed.option} @ ₹${closed.exitPremium} (${src}) · ₹${closed.pnl}`,
+                  },
+                ].slice(-80),
+              };
+              localStorage.setItem(KEY, JSON.stringify(next));
+              setTrades(next.trades);
+              setSettings(next.settings);
+              setEvents(next.events);
+              if (state.settings.telegramNotify !== false) {
+                void pushTelegram(
+                  `📄 AUTO PAPER CLOSED\nNIFTY ${closed.strike} ${closed.option}\nExit ₹${closed.exitPremium} (${src})\nP&L ₹${closed.pnl}`
+                );
+              }
+            }
+            return;
+          }
 
-        const sig = analyzeNifty(
-          state.candles.length ? state.candles : buildNiftyCandles(),
-          analyzeOptsFromSettings({ ...defaultNejoicSettings(), ...state.settings })
-        );
-        setSignal(sig);
-        const gate = canOpenTrade(state.settings, state.trades);
-        const minConf = state.settings.minConfidence ?? 70;
-        if (!gate.ok || sig.bias === 'FLAT' || sig.confidence < minConf) {
-          localStorage.setItem(
-            KEY,
-            JSON.stringify({
-              ...state,
-              signal: sig,
-              spot: sig.niftySpot,
-            })
+          const sig = analyzeNifty(
+            state.candles.length ? state.candles : buildNiftyCandles(),
+            analyzeOptsFromSettings({ ...defaultNejoicSettings(), ...state.settings })
           );
-          return;
+          setSignal(sig);
+          const gate = canOpenTrade(state.settings, state.trades);
+          const minConf = state.settings.minConfidence ?? 70;
+          if (!gate.ok || sig.bias === 'FLAT' || sig.confidence < minConf) {
+            localStorage.setItem(
+              KEY,
+              JSON.stringify({
+                ...state,
+                signal: sig,
+                spot: sig.niftySpot,
+              })
+            );
+            return;
+          }
+
+          const live = await fetchLiveOptionPremium({
+            spot: sig.niftySpot,
+            option: sig.bias,
+            strike: sig.strike,
+          });
+          const premium = live.ok ? live.ltp : sig.premium;
+          const strike = live.strike || sig.strike;
+          const enriched = { ...sig, strike, premium };
+          const trade = openPaperTrade(enriched, state.settings, {
+            premium,
+            instrumentKey: live.instrumentKey || null,
+            premiumSource: live.ok ? 'upstox' : 'estimate',
+            expiry: live.expiry || null,
+          });
+          if (!trade) return;
+          const src = live.ok ? 'Upstox LTP' : 'estimate';
+          const next: NejoicState = {
+            ...state,
+            signal: enriched,
+            spot: sig.niftySpot,
+            trades: [...state.trades, trade],
+            settings: { ...state.settings, status: 'trading' },
+            events: [
+              ...state.events,
+              {
+                id: crypto.randomUUID(),
+                at: new Date().toISOString(),
+                text: `Auto-opened ${trade.option} ${trade.strike} @ ₹${trade.entryPremium} (${src})`,
+              },
+            ].slice(-80),
+          };
+          localStorage.setItem(KEY, JSON.stringify(next));
+          setTrades(next.trades);
+          setSettings(next.settings);
+          setEvents(next.events);
+          setSignal(enriched);
+          setSpot(sig.niftySpot);
+          if (state.settings.telegramNotify !== false) {
+            void pushTelegram(
+              `📄 AUTO PAPER OPEN\nNIFTY ${trade.strike} ${trade.option} @ ₹${trade.entryPremium} (${src})\nSetup ${sig.setup} · ${sig.confidence}%`
+            );
+          }
+        } finally {
+          autoRef.current = false;
         }
-        const trade = openPaperTrade(sig, state.settings);
-        if (!trade) return;
-        const next: NejoicState = {
-          ...state,
-          signal: sig,
-          spot: sig.niftySpot,
-          trades: [...state.trades, trade],
-          settings: { ...state.settings, status: 'trading' },
-          events: [
-            ...state.events,
-            {
-              id: crypto.randomUUID(),
-              at: new Date().toISOString(),
-              text: `Auto-opened ${trade.option} ${trade.strike} @ ₹${trade.entryPremium}`,
-            },
-          ].slice(-80),
-        };
-        localStorage.setItem(KEY, JSON.stringify(next));
-        setTrades(next.trades);
-        setSettings(next.settings);
-        setEvents(next.events);
-        setSignal(sig);
-        setSpot(sig.niftySpot);
-        if (state.settings.telegramNotify !== false) {
-          void pushTelegram(
-            `📄 AUTO PAPER OPEN\nNIFTY ${trade.strike} ${trade.option} @ ₹${trade.entryPremium}\nSetup ${sig.setup} · ${sig.confidence}%`
-          );
-        }
-      } finally {
-        autoRef.current = false;
-      }
+      })();
     }, 5000);
 
     return () => window.clearInterval(id);
   }, [ready, settings.autoTrade, settings.status]);
 
-  // Background pulse check → Telegram when decision flips (desk-free while tab open)
+  // Desk pulse → Telegram: instrument / TF / studies from Nejoic Settings
   useEffect(() => {
     if (!ready) return;
     if (!settings.autoTrade) return;
     if (settings.telegramNotify === false) return;
 
+    const settingsKey = [
+      settings.telegramInstrument,
+      settings.telegramTimeframe,
+      settings.telegramHeartbeatMinutes,
+      settings.telegramIncludeStudies,
+      settings.strategyId,
+      settings.strategyIds,
+      settings.orbMinutes,
+      settings.analysisStyle,
+      settings.minConfidence,
+      settings.leftBars,
+      settings.rightBars,
+      settings.emaFast,
+      settings.emaSlow,
+      settings.rsiPeriod,
+      settings.breakoutLookback,
+    ].join('|');
+    const prevKey = localStorage.getItem('nejoic_tg_settings_key') || '';
+    if (prevKey && prevKey !== settingsKey) {
+      // Force next report to use new message shape immediately
+      localStorage.setItem(LAST_PULSE_SENT_AT_KEY, '0');
+      localStorage.setItem(LAST_PULSE_FP_KEY, '');
+    }
+    localStorage.setItem('nejoic_tg_settings_key', settingsKey);
+
     const tick = async () => {
       try {
-        const tf = settings.primaryTimeframe || '5m';
-        const res = await fetch(`/api/nejoic/pulse?tf=${tf}`);
+        const heartbeatMin = Math.max(
+          3,
+          Math.min(60, Number(settings.telegramHeartbeatMinutes) || 15)
+        );
+        const res = await fetch('/api/nejoic/pulse', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tf: settings.telegramTimeframe || settings.primaryTimeframe || '15m',
+            instrument: settings.telegramInstrument || 'AUTO',
+            settings,
+          }),
+        });
         const pulse = (await res.json()) as {
           decision?: string;
           text?: string;
           ok?: boolean;
+          desk?: string;
+          scoreLabel?: string;
+          spot?: number;
+          asset?: string;
         };
         if (!pulse.ok || !pulse.text) return;
-        localStorage.setItem(LAST_PULSE_DECISION_KEY, pulse.decision || '');
-        // Every 3 minutes: send full Live Pulse update to Telegram
+
+        const desk = pulse.desk || 'INDIA';
+        const decision = pulse.decision || 'WAIT';
+        const prevDecision = localStorage.getItem(LAST_PULSE_DECISION_KEY) || '';
+        const fp = `${desk}|${decision}|${pulse.scoreLabel}|${pulse.asset}|${Math.round(pulse.spot || 0)}|${settingsKey}`;
+        const prevFp = localStorage.getItem(LAST_PULSE_FP_KEY) || '';
+        const lastSent = Number(localStorage.getItem(LAST_PULSE_SENT_AT_KEY) || 0);
+        const now = Date.now();
+        const heartbeatMs = heartbeatMin * 60 * 1000;
+        const flippedToAction =
+          decision !== prevDecision && (decision === 'BUY_CE' || decision === 'BUY_PE');
+        const highNew = pulse.scoreLabel === 'HIGH' && fp !== prevFp;
+        const heartbeatDue = now - lastSent >= heartbeatMs;
+
+        localStorage.setItem(LAST_PULSE_DECISION_KEY, decision);
+
+        if (!flippedToAction && !highNew && !heartbeatDue) return;
+
         await pushTelegram(pulse.text);
+        localStorage.setItem(LAST_PULSE_SENT_AT_KEY, String(now));
+        localStorage.setItem(LAST_PULSE_FP_KEY, fp);
       } catch {
         /* ignore */
       }
@@ -555,7 +736,27 @@ export function useNejoic() {
     void tick();
     const id = window.setInterval(tick, 3 * 60 * 1000);
     return () => window.clearInterval(id);
-  }, [ready, settings.autoTrade, settings.telegramNotify, settings.primaryTimeframe]);
+  }, [
+    ready,
+    settings.autoTrade,
+    settings.telegramNotify,
+    settings.telegramInstrument,
+    settings.telegramTimeframe,
+    settings.telegramHeartbeatMinutes,
+    settings.telegramIncludeStudies,
+    settings.primaryTimeframe,
+    settings.strategyId,
+    settings.strategyIds,
+    settings.orbMinutes,
+    settings.analysisStyle,
+    settings.minConfidence,
+    settings.leftBars,
+    settings.rightBars,
+    settings.emaFast,
+    settings.emaSlow,
+    settings.rsiPeriod,
+    settings.breakoutLookback,
+  ]);
 
   const ask = useCallback(
     async (prompt: string) => {
@@ -633,6 +834,11 @@ export function useNejoic() {
         autoTrade: patch.autoTrade ?? state.settings.autoTrade,
         updatedAt: new Date().toISOString(),
       };
+      nextSettings.strategyIds = normalizeStrategyIds(
+        nextSettings.strategyIds,
+        nextSettings.strategyId
+      );
+      nextSettings.strategyId = nextSettings.strategyIds[0] ?? 'price_action_hhll';
       persist(
         pushEvent('Nejoic settings saved.', {
           ...state,

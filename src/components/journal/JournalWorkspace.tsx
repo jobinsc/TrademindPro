@@ -4,12 +4,15 @@ import { useMemo, useState } from 'react';
 import { Plus, Search, X } from 'lucide-react';
 import InfoBubble from '@/components/ui/InfoBubble';
 import { useTrades } from '@/hooks/useTrades';
+import { useTradeLiveSync } from '@/hooks/useTradeLiveSync';
 import {
   emptyTradeInput,
   isOpenTrade,
   summarizeTrades,
+  TRADE_STYLES,
   type Trade,
   type TradeInput,
+  type TradeStyle,
 } from '@/lib/trades';
 import { formatCurrency } from '@/lib/utils';
 import TradeForm from '@/components/journal/TradeForm';
@@ -17,14 +20,17 @@ import TradeTable from '@/components/journal/TradeTable';
 
 type FormMode = 'full' | 'close';
 type StatusFilter = 'ALL' | 'OPEN' | 'CLOSED';
+type StyleFilter = 'ALL' | TradeStyle;
 
 export default function JournalWorkspace() {
-  const { trades, ready, addTrade, updateTrade, deleteTrade } = useTrades();
+  const { trades, ready, addTrade, updateTrade, deleteTrade, patchTradeLive } = useTrades();
+  useTradeLiveSync(trades, ready, patchTradeLive);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Trade | null>(null);
   const [formMode, setFormMode] = useState<FormMode>('full');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
+  const [styleFilter, setStyleFilter] = useState<StyleFilter>('ALL');
 
   const stats = useMemo(() => summarizeTrades(trades), [trades]);
 
@@ -35,14 +41,16 @@ export default function JournalWorkspace() {
         !q ||
         t.symbol.includes(q) ||
         t.strategy.toUpperCase().includes(q) ||
-        t.tags.toUpperCase().includes(q);
+        t.tags.toUpperCase().includes(q) ||
+        (t.style || '').toUpperCase().includes(q);
       const matchStatus =
         statusFilter === 'ALL' ||
         (statusFilter === 'OPEN' && isOpenTrade(t)) ||
         (statusFilter === 'CLOSED' && !isOpenTrade(t));
-      return matchQ && matchStatus;
+      const matchStyle = styleFilter === 'ALL' || t.style === styleFilter;
+      return matchQ && matchStatus && matchStyle;
     });
-  }, [trades, query, statusFilter]);
+  }, [trades, query, statusFilter, styleFilter]);
 
   function closeDrawer() {
     setOpen(false);
@@ -88,6 +96,7 @@ export default function JournalWorkspace() {
         symbol: editing.symbol,
         side: editing.side,
         segment: editing.segment,
+        style: editing.style || 'swing',
         qty: editing.qty,
         entryPrice: editing.entryPrice,
         exitPrice: editing.exitPrice,
@@ -120,8 +129,11 @@ export default function JournalWorkspace() {
               Trade Journal
             </h1>
             <InfoBubble title="About Journal">
-              Log a buy as <strong className="font-semibold text-sky-ink">Open</strong>, then close it later when you sell.
-              Same stock at different prices = separate entries. Dates cannot be in the future.
+              <strong className="font-semibold text-sky-ink">Journal</strong> tracks trades
+              (intraday / swing / positional).{' '}
+              <strong className="font-semibold text-sky-ink">Holdings</strong> is your delivery
+              portfolio book — separate. Pick a trade style on each entry so analytics can split
+              results by type.
             </InfoBubble>
           </div>
         </div>
@@ -170,6 +182,33 @@ export default function JournalWorkspace() {
               }`}
             >
               {s}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap rounded-xl border border-[#cfe0ee] bg-white p-1">
+          <button
+            type="button"
+            onClick={() => setStyleFilter('ALL')}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+              styleFilter === 'ALL'
+                ? 'bg-sky-mist text-sky-deep'
+                : 'text-sky-ink/50 hover:text-sky-ink'
+            }`}
+          >
+            All styles
+          </button>
+          {TRADE_STYLES.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => setStyleFilter(s.id)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                styleFilter === s.id
+                  ? 'bg-sky-mist text-sky-deep'
+                  : 'text-sky-ink/50 hover:text-sky-ink'
+              }`}
+            >
+              {s.label}
             </button>
           ))}
         </div>

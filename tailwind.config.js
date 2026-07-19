@@ -9,17 +9,27 @@ module.exports = {
     extend: {
       colors: {
         sky: {
-          soft: '#F4F9FD',
-          mist: '#E8F2FA',
-          light: '#D6EAF7',
-          mid: '#5BA3D9',
-          deep: '#1A6BA8',
-          ink: '#0C3D5C',
+          // Keep main app mostly as-today; ink is thick black for reading
+          soft: '#F0F7FC',
+          mist: '#E3F1FA',
+          light: '#D0E8F6',
+          card: '#FFFFFF',
+          line: '#9BC7E3',
+          mid: '#2E86C5',
+          deep: '#1565A0',
+          // Soft pleasing side panel blues
+          panel: '#EAF6FC',
+          panelMid: '#F5FBFE',
+          panelSoft: '#E8F4FB',
+          ink: '#0A0A0A',
         },
       },
       fontFamily: {
-        display: ['var(--font-display)', 'system-ui', 'sans-serif'],
+        display: ['var(--font-display)', 'Georgia', 'serif'],
         body: ['var(--font-body)', 'system-ui', 'sans-serif'],
+      },
+      fontWeight: {
+        thick: '700',
       },
       animation: {
         'fade-up': 'fadeUp 0.8s ease-out forwards',

@@ -1,5 +1,7 @@
 export type TradeSide = 'BUY' | 'SELL';
 export type TradeSegment = 'EQ' | 'FUT' | 'OPT';
+/** How long you intended to hold — separate from strategy / segment */
+export type TradeStyle = 'intraday' | 'swing' | 'positional';
 export type TradeEmotion =
   | 'Calm'
   | 'Confident'
@@ -9,11 +11,25 @@ export type TradeEmotion =
   | 'Excited'
   | 'Neutral';
 
+export type TradeLiveAnalysis = {
+  ltp: number | null;
+  changePct: number | null;
+  unrealized: number | null;
+  bias: 'CE' | 'PE' | 'FLAT';
+  setup: string;
+  confidence: number;
+  pattern: string;
+  structureText?: string;
+  updatedAt: string;
+};
+
 export type Trade = {
   id: string;
   symbol: string;
   side: TradeSide;
   segment: TradeSegment;
+  /** Intraday / swing / positional — drives separate analysis */
+  style: TradeStyle;
   qty: number;
   entryPrice: number;
   /** null = still open (waiting to sell / hit SL) */
@@ -28,9 +44,11 @@ export type Trade = {
   mistakes: string;
   notes: string;
   createdAt: string;
+  /** Auto-filled in background — live LTP + price-action (no user action) */
+  live?: TradeLiveAnalysis | null;
 };
 
-export type TradeInput = Omit<Trade, 'id' | 'createdAt'>;
+export type TradeInput = Omit<Trade, 'id' | 'createdAt' | 'live'>;
 
 export const EMOTIONS: TradeEmotion[] = [
   'Calm',
@@ -44,13 +62,29 @@ export const EMOTIONS: TradeEmotion[] = [
 
 export const SEGMENTS: TradeSegment[] = ['EQ', 'FUT', 'OPT'];
 
+export const TRADE_STYLES: { id: TradeStyle; label: string; hint: string }[] = [
+  { id: 'intraday', label: 'Intraday', hint: 'Same-day — usually square off before close' },
+  { id: 'swing', label: 'Swing', hint: 'Hold a few days to a couple of weeks' },
+  { id: 'positional', label: 'Positional', hint: 'Multi-week / months — longer investment hold' },
+];
+
+export function tradeStyleLabel(style: TradeStyle | string | undefined): string {
+  const row = TRADE_STYLES.find((s) => s.id === style);
+  return row?.label || 'Swing';
+}
+
+export function normalizeTradeStyle(raw: unknown): TradeStyle {
+  if (raw === 'intraday' || raw === 'positional' || raw === 'swing') return raw;
+  return 'swing';
+}
+
 export const STRATEGIES = [
   'Breakout',
   'EMA Crossover',
   'RSI Reversal',
   'Options Premium',
-  'Swing',
-  'Intraday Scalp',
+  'Price Action',
+  'Support / Resistance',
   'Other',
 ];
 
@@ -81,6 +115,7 @@ export function emptyTradeInput(): TradeInput {
     symbol: '',
     side: 'BUY',
     segment: 'EQ',
+    style: 'intraday',
     qty: 1,
     entryPrice: 0,
     exitPrice: null,
@@ -104,6 +139,7 @@ export function normalizeTrade(raw: Partial<Trade> & { id: string }): Trade {
     symbol: (raw.symbol || '').toUpperCase(),
     side: raw.side === 'SELL' ? 'SELL' : 'BUY',
     segment: raw.segment === 'FUT' || raw.segment === 'OPT' ? raw.segment : 'EQ',
+    style: normalizeTradeStyle(raw.style),
     qty: Number(raw.qty) || 0,
     entryPrice: Number(raw.entryPrice) || 0,
     exitPrice: normalizedExit,
@@ -115,7 +151,20 @@ export function normalizeTrade(raw: Partial<Trade> & { id: string }): Trade {
     mistakes: raw.mistakes || '',
     notes: raw.notes || '',
     createdAt: raw.createdAt || new Date().toISOString(),
+    live: raw.live && typeof raw.live === 'object' ? raw.live : null,
   };
+}
+
+/** Mark-to-market unrealized for open trades */
+export function calcUnrealized(
+  trade: Pick<Trade, 'side' | 'qty' | 'entryPrice' | 'exitPrice'>,
+  ltp: number | null | undefined
+): number | null {
+  if (!isOpenTrade(trade)) return null;
+  if (ltp == null || !Number.isFinite(ltp) || ltp <= 0) return null;
+  const diff = ltp - trade.entryPrice;
+  const signed = trade.side === 'BUY' ? diff : -diff;
+  return signed * trade.qty;
 }
 
 export function summarizeTrades(trades: Trade[]) {
@@ -143,6 +192,7 @@ export type AnalyticsBundle = {
   byStrategy: { name: string; pnl: number; count: number }[];
   bySymbol: { name: string; pnl: number; count: number }[];
   byEmotion: { name: string; pnl: number; count: number }[];
+  byStyle: { name: string; pnl: number; count: number; winRate: number }[];
 };
 
 export function buildAnalytics(trades: Trade[]): AnalyticsBundle {
@@ -198,6 +248,26 @@ export function buildAnalytics(trades: Trade[]): AnalyticsBundle {
       .sort((a, b) => b.pnl - a.pnl);
   };
 
+  const styleMap = new Map<string, { pnl: number; count: number; wins: number }>();
+  for (const { trade, pnl } of closed) {
+    const name = tradeStyleLabel(trade.style);
+    const cur = styleMap.get(name) || { pnl: 0, count: 0, wins: 0 };
+    cur.pnl += pnl;
+    cur.count += 1;
+    if (pnl > 0) cur.wins += 1;
+    styleMap.set(name, cur);
+  }
+  const byStyle = TRADE_STYLES.map((s) => {
+    const name = s.label;
+    const v = styleMap.get(name) || { pnl: 0, count: 0, wins: 0 };
+    return {
+      name,
+      pnl: Math.round(v.pnl * 100) / 100,
+      count: v.count,
+      winRate: v.count ? (v.wins / v.count) * 100 : 0,
+    };
+  });
+
   const pnls = closed.map((x) => x.pnl);
 
   return {
@@ -213,5 +283,6 @@ export function buildAnalytics(trades: Trade[]): AnalyticsBundle {
     byStrategy: groupBy((t) => t.strategy),
     bySymbol: groupBy((t) => t.symbol).slice(0, 8),
     byEmotion: groupBy((t) => t.emotion),
+    byStyle,
   };
 }

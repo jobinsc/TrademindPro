@@ -16,47 +16,101 @@ export const NEJOIC_TIMEFRAMES = [
 export type NejoicTimeframeId = (typeof NEJOIC_TIMEFRAMES)[number]['id'];
 
 export type NejoicStrategyId =
-  | 'price_action_hhll'
+  | 'price_action_hhll' // Price Action · Long (HH / HL → CE)
+  | 'swing_hl' // Price Action · Short (LH / LL → PE)
   | 'ema_cross'
   | 'rsi_bounce'
   | 'breakout'
-  | 'swing_hl';
+  | 'orb'
+  | 'vwap_reclaim'
+  | 'macd_cross';
 
-export const NEJOIC_STRATEGIES: {
+export type NejoicStrategyMeta = {
   id: NejoicStrategyId;
   name: string;
   short: string;
   whatYouFix: string;
-}[] = [
+  /** Visual group in settings */
+  group: 'price_action' | 'indicators';
+  /** Side hint for PA family */
+  side?: 'long' | 'short';
+};
+
+export const NEJOIC_STRATEGIES: NejoicStrategyMeta[] = [
   {
     id: 'price_action_hhll',
-    name: 'Price Action (HH / HL)',
-    short: 'Your Pine style — Higher High / Higher Low only. No RSI/EMA.',
-    whatYouFix: 'Left/Right bars + strict or balanced style',
+    name: 'Long · HH / HL',
+    short: 'Bullish price action only — Higher High / Higher Low → CE.',
+    whatYouFix: 'Left/Right bars + analysis style',
+    group: 'price_action',
+    side: 'long',
+  },
+  {
+    id: 'swing_hl',
+    name: 'Short · LH / LL',
+    short: 'Bearish price action only — Lower High / Lower Low → PE.',
+    whatYouFix: 'Left/Right bars (often 5–8) + analysis style',
+    group: 'price_action',
+    side: 'short',
   },
   {
     id: 'ema_cross',
     name: 'EMA Cross',
     short: 'Fast EMA crosses Slow EMA → CE (up) or PE (down).',
     whatYouFix: 'Fast EMA & Slow EMA numbers',
+    group: 'indicators',
   },
   {
     id: 'rsi_bounce',
     name: 'RSI Bounce',
     short: 'Buy CE when RSI rises from oversold; PE from overbought.',
     whatYouFix: 'RSI length + oversold / overbought levels',
+    group: 'indicators',
   },
   {
     id: 'breakout',
-    name: 'Breakout',
+    name: 'Range Breakout',
     short: 'CE if price breaks recent high; PE if breaks recent low.',
     whatYouFix: 'Lookback bars for high/low',
+    group: 'indicators',
   },
   {
-    id: 'swing_hl',
-    name: 'Swing HL / LH',
-    short: 'Same HH/HL idea but looser — good for slower charts.',
-    whatYouFix: 'Left/Right bars (usually higher, e.g. 8–10)',
+    id: 'orb',
+    name: 'ORB (Opening Range)',
+    short: 'Break of first N minutes high/low — classic Indian intraday.',
+    whatYouFix: 'Opening range minutes (e.g. 15)',
+    group: 'indicators',
+  },
+  {
+    id: 'vwap_reclaim',
+    name: 'VWAP Reclaim',
+    short: 'CE on reclaim above VWAP; PE on reject below — great for day trades.',
+    whatYouFix: 'Uses session VWAP (no extra knobs)',
+    group: 'indicators',
+  },
+  {
+    id: 'macd_cross',
+    name: 'MACD Cross',
+    short: 'MACD line crosses signal → CE / PE momentum flip.',
+    whatYouFix: 'Standard 12 / 26 / 9 (fixed)',
+    group: 'indicators',
+  },
+];
+
+export const NEJOIC_STRATEGY_GROUPS: {
+  id: 'price_action' | 'indicators';
+  title: string;
+  hint: string;
+}[] = [
+  {
+    id: 'price_action',
+    title: 'Price Action method',
+    hint: 'Same HH/HL/LH/LL engine — Long for CE side, Short for PE side. Select one or both.',
+  },
+  {
+    id: 'indicators',
+    title: 'Indicators & breakouts',
+    hint: 'Tick any combination. Nejoic evaluates all selected and picks the strongest clear signal.',
   },
 ];
 
@@ -117,6 +171,25 @@ export function normalizeTimeframeId(raw: string | null | undefined): NejoicTime
   if (lower.includes('5m') || lower === '5') return '5m';
   if (lower.includes('1m')) return '1m';
   return '5m';
+}
+
+const STRATEGY_SET = new Set(NEJOIC_STRATEGIES.map((s) => s.id));
+
+/** Resolve multi-select list; migrates legacy single strategyId. */
+export function normalizeStrategyIds(
+  strategyIds?: NejoicStrategyId[] | null,
+  strategyId?: NejoicStrategyId | string | null
+): NejoicStrategyId[] {
+  const fromList = (strategyIds || []).filter((id): id is NejoicStrategyId =>
+    STRATEGY_SET.has(id as NejoicStrategyId)
+  );
+  if (fromList.length) return [...new Set(fromList)];
+  const single = (strategyId || 'price_action_hhll') as NejoicStrategyId;
+  return STRATEGY_SET.has(single) ? [single] : ['price_action_hhll'];
+}
+
+export function strategyLabel(id: NejoicStrategyId): string {
+  return NEJOIC_STRATEGIES.find((s) => s.id === id)?.name ?? id;
 }
 
 /** True if user only typed a timeframe / pulse request */

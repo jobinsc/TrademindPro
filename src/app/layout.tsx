@@ -21,6 +21,10 @@ export const metadata: Metadata = {
   title: 'TradeMind Pro — AI Trading Operating System',
   description:
     'Journal, live terminal, NSE & BSE scanner, automation, and AI agents — one professional platform for Indian traders.',
+  icons: {
+    icon: '/trademind-logo.svg',
+    apple: '/trademind-logo.svg',
+  },
 };
 
 export default function RootLayout({

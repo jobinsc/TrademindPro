@@ -8,6 +8,7 @@ import { usePaperTrading } from '@/hooks/usePaperTrading';
 import { paperPnL, summarizePaper, type PaperSide } from '@/lib/paper';
 import { formatCurrency } from '@/lib/utils';
 import { SortableTh, useSortable } from '@/components/ui/sortable';
+import SymbolAutocomplete from '@/components/ui/SymbolAutocomplete';
 
 export default function PaperTradingWorkspace() {
   const { ready, account, trades, openTrade, closeTrade, resetAccount } = usePaperTrading();
@@ -256,9 +257,11 @@ export default function PaperTradingWorkspace() {
               </div>
             )}
             <Field label="Symbol">
-              <input
+              <SymbolAutocomplete
                 value={symbol}
-                onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                onChange={setSymbol}
+                onPick={(item) => setSymbol(item.symbol)}
+                placeholder="Search NSE/BSE scrips…"
                 className={inputClass}
                 required
               />

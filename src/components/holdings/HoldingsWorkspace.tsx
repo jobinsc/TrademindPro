@@ -1,11 +1,12 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, Briefcase, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import InfoBubble from '@/components/ui/InfoBubble';
 import { useHoldings } from '@/hooks/useHoldings';
 import { useBroker } from '@/hooks/useBroker';
+import { useLiveQuotes } from '@/hooks/useLiveQuotes';
 import {
   SECTORS,
   emptyHoldingInput,
@@ -18,11 +19,13 @@ import {
   type HoldingInput,
 } from '@/lib/holdings';
 import type { Exchange } from '@/lib/watchlist';
-import { formatCurrency, formatPercent } from '@/lib/utils';
+import { cn, formatCurrency, formatPercent } from '@/lib/utils';
 import { SortableTh, useSortable } from '@/components/ui/sortable';
+import SymbolAutocomplete from '@/components/ui/SymbolAutocomplete';
+import { SymbolChartLink } from '@/components/chart/SymbolChartLink';
 
 export default function HoldingsWorkspace() {
-  const { holdings, ready, addHolding, updateHolding, deleteHolding } = useHoldings();
+  const { holdings, ready, addHolding, updateHolding, deleteHolding, patchLtps } = useHoldings();
   const { connection } = useBroker();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Holding | null>(null);
@@ -30,18 +33,53 @@ export default function HoldingsWorkspace() {
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
 
-  const summary = useMemo(() => summarizeHoldings(holdings), [holdings]);
+  const liveSymbols = useMemo(
+    () => holdings.map((h) => ({ symbol: h.symbol, exchange: h.exchange })),
+    [holdings]
+  );
+  const { quotes, live, updatedAt } = useLiveQuotes(liveSymbols, {
+    enabled: ready && liveSymbols.length > 0,
+    intervalMs: 3000,
+  });
+
+  // Persist live LTP into holdings every ~15s so P&L stays current offline too
+  const lastPersist = useRef(0);
+  useEffect(() => {
+    const now = Date.now();
+    if (now - lastPersist.current < 15_000) return;
+    const updates: { id: string; ltp: number }[] = [];
+    for (const h of holdings) {
+      const q = quotes[h.symbol.toUpperCase()];
+      if (q?.ok && q.lastPrice > 0 && Math.abs(q.lastPrice - h.ltp) > 0.001) {
+        updates.push({ id: h.id, ltp: q.lastPrice });
+      }
+    }
+    if (updates.length) {
+      lastPersist.current = now;
+      patchLtps(updates);
+    }
+  }, [quotes, holdings, patchLtps]);
+
+  const liveHoldings = useMemo(() => {
+    return holdings.map((h) => {
+      const q = quotes[h.symbol.toUpperCase()];
+      if (q?.ok && q.lastPrice > 0) return { ...h, ltp: q.lastPrice, liveOk: true as const };
+      return { ...h, liveOk: false as const };
+    });
+  }, [holdings, quotes]);
+
+  const summary = useMemo(() => summarizeHoldings(liveHoldings), [liveHoldings]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toUpperCase();
-    if (!q) return holdings;
-    return holdings.filter(
+    if (!q) return liveHoldings;
+    return liveHoldings.filter(
       (h) =>
         h.symbol.includes(q) ||
         h.name.toUpperCase().includes(q) ||
         h.sector.toUpperCase().includes(q)
     );
-  }, [holdings, query]);
+  }, [liveHoldings, query]);
 
   const { sorted: displayHoldings, sort, toggle } = useSortable(
     filtered,
@@ -130,10 +168,21 @@ export default function HoldingsWorkspace() {
               Holdings &amp; Portfolio
             </h1>
             <InfoBubble title="About Holdings">
-              Track delivery holdings manually for now. When broker sync is live, these will auto-fill
-              from your demat.
+              Holdings = delivery / portfolio book (what you own). Journal trades =
+              buy/sell activity (intraday, swing, positional). They are separate on purpose —
+              LTP here refreshes automatically.
             </InfoBubble>
           </div>
+          <p className="mt-1 text-[11px] font-semibold text-sky-ink/45">
+            {live ? (
+              <span className="text-emerald-600">Live</span>
+            ) : liveSymbols.length ? (
+              <span>Updating…</span>
+            ) : (
+              <span>Add holdings to start live prices</span>
+            )}
+            {updatedAt ? ` · ${new Date(updatedAt).toLocaleTimeString('en-IN')}` : ''}
+          </p>
         </div>
         <button
           type="button"
@@ -248,7 +297,14 @@ export default function HoldingsWorkspace() {
                     return (
                       <tr key={h.id} className="border-b border-[#e8f2fa] last:border-0">
                         <td className="px-2 py-3">
-                          <p className="font-semibold text-sky-ink">{h.symbol}</p>
+                          <SymbolChartLink
+                            symbol={h.symbol}
+                            exchange={h.exchange}
+                            name={h.name}
+                            className="font-semibold"
+                          >
+                            {h.symbol}
+                          </SymbolChartLink>
                           <p className="text-[11px] text-sky-ink/40">
                             {h.exchange} · {h.sector}
                           </p>
@@ -257,7 +313,7 @@ export default function HoldingsWorkspace() {
                         <td className="px-2 py-3 tabular-nums text-sky-ink/70">
                           {h.avgPrice.toFixed(2)}
                         </td>
-                        <td className="px-2 py-3 tabular-nums text-sky-ink/70">
+                        <td className="px-2 py-3 tabular-nums font-semibold text-sky-ink">
                           {h.ltp.toFixed(2)}
                         </td>
                         <td className="px-2 py-3 tabular-nums">
@@ -383,13 +439,20 @@ export default function HoldingsWorkspace() {
               )}
               <label className="block">
                 <span className={labelClass}>Symbol</span>
-                <input
+                <SymbolAutocomplete
                   value={form.symbol}
-                  onChange={(e) =>
-                    setForm({ ...form, symbol: e.target.value.toUpperCase() })
+                  onChange={(symbol) => setForm({ ...form, symbol })}
+                  onPick={(item) =>
+                    setForm({
+                      ...form,
+                      symbol: item.symbol,
+                      name: form.name || item.name,
+                      exchange: item.exchange,
+                    })
                   }
+                  exchange={form.exchange}
                   className={inputClass}
-                  placeholder="RELIANCE"
+                  placeholder="Search NSE/BSE scrips…"
                   required
                 />
               </label>

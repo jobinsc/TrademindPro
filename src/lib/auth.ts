@@ -1,3 +1,5 @@
+import { pullCloudData, pushCloudData } from '@/lib/cloud-sync';
+
 export type UserRole = 'admin' | 'user';
 
 export type AuthUser = {
@@ -16,7 +18,14 @@ export type StoredUser = AuthUser & {
 const USERS_KEY = 'trademindpro_users_v1';
 const SESSION_KEY = 'trademindpro_session_v1';
 
-/** Jobin (and emails/names containing jobin) are treated as admin */
+/**
+ * Cloud mode when NEXT_PUBLIC_AUTH_MODE=cloud (Supabase DB via our API — no email-confirm pain).
+ * local (or unset with no cloud flag) = browser-only login.
+ */
+export function isCloudAuth(): boolean {
+  return process.env.NEXT_PUBLIC_AUTH_MODE?.trim().toLowerCase() === 'cloud';
+}
+
 export function isJobinAdminIdentity(name: string, email: string): boolean {
   const n = name.trim().toLowerCase();
   const e = normalizeEmail(email);
@@ -61,17 +70,12 @@ function normalizeStored(raw: Partial<StoredUser> & { id: string; email: string 
 
 function migrateUsers(users: StoredUser[]): StoredUser[] {
   let next = users.map((u) => normalizeStored(u));
-
-  // Promote Jobin identities
   next = next.map((u) =>
     isJobinAdminIdentity(u.name, u.email) ? { ...u, role: 'admin' as const } : u
   );
-
-  // If no admin exists, first account becomes admin
   if (!next.some((u) => u.role === 'admin') && next.length > 0) {
     next = next.map((u, i) => (i === 0 ? { ...u, role: 'admin' as const } : u));
   }
-
   return next;
 }
 
@@ -99,13 +103,20 @@ function writeUsers(users: StoredUser[]) {
   localStorage.setItem(USERS_KEY, JSON.stringify(users));
 }
 
-export function getSessionUser(): AuthUser | null {
+export function setSessionUser(user: AuthUser | null) {
+  if (user) {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+  } else {
+    localStorage.removeItem(SESSION_KEY);
+  }
+}
+
+export function getSessionUserLocal(): AuthUser | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const session = JSON.parse(raw) as AuthUser;
-    // Refresh from store so role/block updates apply
     const fresh = readUsers().find((u) => u.id === session.id);
     if (!fresh) {
       localStorage.removeItem(SESSION_KEY);
@@ -123,11 +134,29 @@ export function getSessionUser(): AuthUser | null {
   }
 }
 
-export function setSessionUser(user: AuthUser | null) {
-  if (user) {
-    localStorage.setItem(SESSION_KEY, JSON.stringify(user));
-  } else {
-    localStorage.removeItem(SESSION_KEY);
+export function getSessionUser(): AuthUser | null {
+  return getSessionUserLocal();
+}
+
+export async function getSessionUserAsync(): Promise<AuthUser | null> {
+  if (!isCloudAuth()) return getSessionUserLocal();
+
+  try {
+    const res = await fetch('/api/auth/me', { credentials: 'include' });
+    if (!res.ok) {
+      setSessionUser(null);
+      return null;
+    }
+    const data = (await res.json()) as { ok?: boolean; user?: AuthUser };
+    if (!data.ok || !data.user) {
+      setSessionUser(null);
+      return null;
+    }
+    setSessionUser(data.user);
+    return data.user;
+  } catch {
+    setSessionUser(null);
+    return null;
   }
 }
 
@@ -146,6 +175,30 @@ export async function signupUser(input: {
   }
   if (password.length < 6) {
     return { ok: false, error: 'Password must be at least 6 characters' };
+  }
+
+  if (isCloudAuth()) {
+    try {
+      const res = await fetch('/api/auth/signup', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        user?: AuthUser;
+      };
+      if (!res.ok || !data.ok || !data.user) {
+        return { ok: false, error: data.error || 'Signup failed' };
+      }
+      await pullCloudData(data.user.id);
+      setSessionUser(data.user);
+      return { ok: true, user: data.user };
+    } catch {
+      return { ok: false, error: 'Network error during signup' };
+    }
   }
 
   const users = readUsers();
@@ -179,6 +232,31 @@ export async function loginUser(input: {
   password: string;
 }): Promise<{ ok: true; user: AuthUser } | { ok: false; error: string }> {
   const email = normalizeEmail(input.email);
+
+  if (isCloudAuth()) {
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: input.password }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        user?: AuthUser;
+      };
+      if (!res.ok || !data.ok || !data.user) {
+        return { ok: false, error: data.error || 'Login failed' };
+      }
+      await pullCloudData(data.user.id);
+      setSessionUser(data.user);
+      return { ok: true, user: data.user };
+    } catch {
+      return { ok: false, error: 'Network error during login' };
+    }
+  }
+
   const users = readUsers();
   const found = users.find((u) => u.email === email);
   if (!found) {
@@ -193,7 +271,6 @@ export async function loginUser(input: {
     return { ok: false, error: 'Incorrect password. Please try again.' };
   }
 
-  // Keep Jobin as admin even if role was changed somehow
   let userRecord = found;
   if (isJobinAdminIdentity(found.name, found.email) && found.role !== 'admin') {
     userRecord = { ...found, role: 'admin' };
@@ -205,22 +282,54 @@ export async function loginUser(input: {
   return { ok: true, user };
 }
 
-export function logoutUser() {
+export async function logoutUser(): Promise<void> {
+  if (isCloudAuth()) {
+    try {
+      await pushCloudData();
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    } catch {
+      /* ignore */
+    }
+  }
   setSessionUser(null);
 }
 
-/** Admin: list users without password hashes */
-export function listUsersForAdmin(): AuthUser[] {
+export async function listUsersForAdmin(): Promise<AuthUser[]> {
+  if (isCloudAuth()) {
+    try {
+      const res = await fetch('/api/admin/users', { credentials: 'include' });
+      const data = (await res.json()) as { ok?: boolean; users?: AuthUser[] };
+      return data.users || [];
+    } catch {
+      return [];
+    }
+  }
   return readUsers()
     .map(toPublicUser)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-export function setUserBlocked(
+export async function setUserBlocked(
   adminId: string,
   targetId: string,
   blocked: boolean
-): { ok: true } | { ok: false; error: string } {
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (isCloudAuth()) {
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'block', adminId, targetId, blocked }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) return { ok: false, error: data.error || 'Failed' };
+      return { ok: true };
+    } catch {
+      return { ok: false, error: 'Network error' };
+    }
+  }
+
   const users = readUsers();
   const admin = users.find((u) => u.id === adminId);
   if (!admin || admin.role !== 'admin') {
@@ -239,10 +348,26 @@ export function setUserBlocked(
   return { ok: true };
 }
 
-export function deleteUserAccount(
+export async function deleteUserAccount(
   adminId: string,
   targetId: string
-): { ok: true } | { ok: false; error: string } {
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (isCloudAuth()) {
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', targetId }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) return { ok: false, error: data.error || 'Failed' };
+      return { ok: true };
+    } catch {
+      return { ok: false, error: 'Network error' };
+    }
+  }
+
   const users = readUsers();
   const admin = users.find((u) => u.id === adminId);
   if (!admin || admin.role !== 'admin') {
@@ -261,11 +386,27 @@ export function deleteUserAccount(
   return { ok: true };
 }
 
-export function setUserRole(
+export async function setUserRole(
   adminId: string,
   targetId: string,
   role: UserRole
-): { ok: true } | { ok: false; error: string } {
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (isCloudAuth()) {
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'role', adminId, targetId, role }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) return { ok: false, error: data.error || 'Failed' };
+      return { ok: true };
+    } catch {
+      return { ok: false, error: 'Network error' };
+    }
+  }
+
   const users = readUsers();
   const admin = users.find((u) => u.id === adminId);
   if (!admin || admin.role !== 'admin') {
@@ -276,10 +417,7 @@ export function setUserRole(
   }
   const target = users.find((u) => u.id === targetId);
   if (!target) return { ok: false, error: 'User not found' };
-  if (
-    role !== 'admin' &&
-    isJobinAdminIdentity(target.name, target.email)
-  ) {
+  if (role !== 'admin' && isJobinAdminIdentity(target.name, target.email)) {
     return { ok: false, error: 'Jobin must remain an admin' };
   }
 

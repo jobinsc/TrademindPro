@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import InfoBubble from '@/components/ui/InfoBubble';
+import { SymbolChartLink } from '@/components/chart/SymbolChartLink';
 import { useWatchlists } from '@/hooks/useWatchlists';
 import {
   SCAN_TEMPLATES,
@@ -522,11 +523,7 @@ export default function ScannerWorkspace() {
                 {results.length === 0
                   ? 'Pick a strategy, tap settings gear to tune, then Run scan'
                   : `${filteredResults.length} shown · click column headers to sort · last run ${lastRan || '—'}${
-                      source === 'upstox'
-                        ? ` · scanned ${scanned}/${universe} · matched ${matched}`
-                        : source === 'demo'
-                          ? ' · demo'
-                          : ''
+                      scanned > 0 ? ` · scanned ${scanned}/${universe} · matched ${matched}` : ''
                     }`}
               </p>
             </div>
@@ -609,7 +606,14 @@ export default function ScannerWorkspace() {
                       className="border-b border-[#e8f2fa] last:border-0"
                     >
                       <td className="px-2 py-3">
-                        <p className="font-semibold text-sky-ink">{row.symbol}</p>
+                        <SymbolChartLink
+                          symbol={row.symbol}
+                          exchange={row.exchange}
+                          name={row.name}
+                          className="font-semibold"
+                        >
+                          {row.symbol}
+                        </SymbolChartLink>
                         <p className="text-[11px] text-sky-ink/40">
                           {row.exchange} · {row.name}
                         </p>

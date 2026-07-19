@@ -9,6 +9,7 @@ import {
   type BrokerId,
   type TerminalSnapshot,
 } from '@/lib/broker';
+import { isUpstoxAccessTokenExpired } from '@/lib/upstox-client';
 
 const KEY = 'trademindpro_broker_v1';
 
@@ -113,6 +114,7 @@ export function useBroker() {
     try {
       localStorage.removeItem('trademindpro_upstox_token_v1');
       localStorage.removeItem('trademindpro_upstox_connected_at_v1');
+      localStorage.removeItem('trademindpro_upstox_extended_v1');
     } catch {
       /* ignore */
     }
@@ -146,10 +148,29 @@ export function useBroker() {
   useEffect(() => {
     if (!ready) return;
     const token = localStorage.getItem('trademindpro_upstox_token_v1');
-    if (token && !connection.connected) {
+    if (!token) return;
+
+    // Daily expiry ~3:30 AM IST — keep UI honest
+    const at = localStorage.getItem('trademindpro_upstox_connected_at_v1');
+    if (isUpstoxAccessTokenExpired(at)) {
+      if (connection.connected) {
+        const current = readStore();
+        persist({
+          ...current,
+          connection: {
+            ...current.connection,
+            connected: false,
+            connectedAt: at,
+          },
+        });
+      }
+      return;
+    }
+
+    if (!connection.connected) {
       markUpstoxConnected();
     }
-  }, [ready, connection.connected, markUpstoxConnected]);
+  }, [ready, connection.connected, markUpstoxConnected, persist]);
 
   return {
     ready,

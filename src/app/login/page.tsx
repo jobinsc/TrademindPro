@@ -1,5 +1,6 @@
-import LoginForm from '@/components/auth/LoginForm';
+import { redirect } from 'next/navigation';
 
+/** Login always starts from the home page */
 export default function LoginPage() {
-  return <LoginForm />;
+  redirect('/?auth=login#auth');
 }

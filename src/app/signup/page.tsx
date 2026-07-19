@@ -1,5 +1,6 @@
-import SignupForm from '@/components/auth/SignupForm';
+import { redirect } from 'next/navigation';
 
+/** Signup always starts from the home page */
 export default function SignupPage() {
-  return <SignupForm />;
+  redirect('/?auth=signup#auth');
 }

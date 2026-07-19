@@ -18,6 +18,7 @@ import { useStrategies } from '@/hooks/useStrategies';
 import { todayISO } from '@/lib/trades';
 import { formatCurrency } from '@/lib/utils';
 import type { BacktestRun } from '@/lib/backtest';
+import SymbolAutocomplete from '@/components/ui/SymbolAutocomplete';
 
 export default function BacktestingWorkspace() {
   const { strategies, ready: stratReady } = useStrategies();
@@ -129,11 +130,12 @@ export default function BacktestingWorkspace() {
 
           <label className="block">
             <span className={labelClass}>Symbol</span>
-            <input
+            <SymbolAutocomplete
               value={symbol}
-              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+              onChange={setSymbol}
+              onPick={(item) => setSymbol(item.symbol)}
+              placeholder="NIFTY / RELIANCE…"
               className={inputClass}
-              placeholder="NIFTY"
             />
           </label>
 

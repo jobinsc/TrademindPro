@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import {
   Activity,
   Bot,
@@ -23,7 +24,9 @@ import {
   YAxis,
 } from 'recharts';
 import { useNejoic } from '@/hooks/useNejoic';
+import { deskLabel, getActiveDesk } from '@/lib/market-desk';
 import { NEJOIC_NAME } from '@/lib/nejoic';
+import { hrefWithFrom } from '@/lib/nav-return';
 import { formatCurrency } from '@/lib/utils';
 import FullStopBar from '@/components/trading/FullStopBar';
 
@@ -36,6 +39,7 @@ function statusLabel(status: string, autoOn: boolean) {
 }
 
 export default function NejoicWorkspace() {
+  const pathname = usePathname();
   const {
     ready,
     settings,
@@ -45,8 +49,6 @@ export default function NejoicWorkspace() {
     trades,
     events,
     chat,
-    feedSource,
-    feedLabel,
     dayPnl,
     analyse,
     setWatching,
@@ -99,24 +101,39 @@ export default function NejoicWorkspace() {
             </h1>
             <InfoBubble title="How Nejoic works">
               <p>
-                Price-action only (HH / HL / LH / LL from your Pine). No indicators. Nifty options
-                with +₹{settings.dailyProfitTarget} / -₹{settings.dailyMaxLoss} hard daily rules.
+                <strong>India desk</strong> Mon–Fri 09:15–15:30 IST: Nifty CE/PE paper only.
               </p>
               <p className="mt-2">
-                Plain chart only (lb=5 rb=5). No RSI/EMA/MACD. Takes CE mainly after Higher Low in
-                uptrend, PE after Lower High in downtrend. Feed: {feedLabel}. Auto stays paper until
-                live orders.
+                <strong>After hours</strong> (weekday outside cash): <strong>Gold only</strong> on{' '}
+                <strong>15m</strong> — Telegram reports Gold only.
+              </p>
+              <p className="mt-2">
+                <strong>Weekend</strong> Sat–Sun: <strong>BTC only</strong> — no other instruments.
+              </p>
+              <p className="mt-2">
+                Telegram delivery (on/off, instrument, timeframe, heartbeat) is under{' '}
+                <strong>Alerts → Telegram bot</strong>. Strategy maths stay in Nejoic Settings.
+                Sends on signal flips, high score, or your heartbeat. Daily rules +₹
+                {settings.dailyProfitTarget} / -₹{settings.dailyMaxLoss}.
               </p>
             </InfoBubble>
           </div>
-          <Link
-            href="/app/nejoic/settings"
-            className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-sky-deep hover:underline"
-          >
-            Nejoic Settings
-          </Link>
-        </div>
-        <div className="flex flex-col items-end gap-2">
+          <p className="mt-2 text-[12px] font-semibold text-sky-deep">{deskLabel(getActiveDesk())}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Link
+              href={hrefWithFrom('/app/nejoic/settings', pathname || '/app/nejoic')}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-[#cfe0ee] bg-white px-3 py-1.5 text-sm font-semibold text-sky-deep hover:bg-sky-soft/40"
+            >
+              Strategy settings
+            </Link>
+            <Link
+              href="/app/alerts"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-[#cfe0ee] bg-white px-3 py-1.5 text-sm font-semibold text-sky-deep hover:bg-sky-soft/40"
+            >
+              Telegram · Alerts
+            </Link>
+          </div>
+        </div>        <div className="flex flex-col items-end gap-2">
           <span
             className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] font-semibold ${
               locked
@@ -132,13 +149,45 @@ export default function NejoicWorkspace() {
             {statusLabel(settings.status, settings.autoTrade)}
           </span>
           <p className="text-[11px] text-sky-ink/45">
-            {feedSource === 'live' ? 'Live Nifty feed' : 'Paper mode · sim chart fallback'}
+            {getActiveDesk() === 'INDIA'
+              ? 'India cash desk · Nifty'
+              : getActiveDesk() === 'GOLD'
+                ? 'After hours · Gold 15m only'
+                : 'Weekend · BTC 15m only'}
           </p>
         </div>
       </div>
 
       <div className="mt-5">
         <FullStopBar />
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-[#cfe0ee] bg-sky-soft/50 px-4 py-3 text-[12px] text-sky-ink/75">
+        <p className="font-semibold text-sky-ink">Monday open checklist</p>
+        <ul className="mt-1.5 list-inside list-disc space-y-0.5">
+          <li>
+            Desk now: <strong>{deskLabel(getActiveDesk())}</strong>
+            {getActiveDesk() === 'INDIA' ? ' — Nifty paper allowed' : ' — switches to Nifty at 09:15 IST'}
+          </li>
+          <li>
+            Auto: {settings.autoTrade ? 'ON ✓' : 'OFF — press Start before 9:15'}
+            {' · '}
+            Telegram: {settings.telegramNotify === false ? 'OFF' : 'ON ✓'} ·{' '}
+            {settings.telegramInstrument || 'AUTO'} · {settings.telegramTimeframe || '15m'} · every{' '}
+            {settings.telegramHeartbeatMinutes || 15}m
+          </li>
+          <li>
+            Keep this tab open for Telegram heartbeats (every{' '}
+            {settings.telegramHeartbeatMinutes || 15} min)
+          </li>
+          <li>
+            Broker:{' '}
+            <Link href="/app/terminal" className="font-semibold text-sky-deep hover:underline">
+              Terminal → Login with Upstox
+            </Link>{' '}
+            (once after ~3:30 AM IST)
+          </li>
+        </ul>
       </div>
 
       <div className="mt-5 grid gap-3 sm:grid-cols-3">
@@ -184,14 +233,7 @@ export default function NejoicWorkspace() {
             <div className="flex items-center gap-2">
               <Activity className="h-4 w-4 text-sky-deep" strokeWidth={1.75} />
               <h2 className="font-display text-[15px] font-semibold text-sky-ink">
-                Nifty chart{' '}
-                <span
-                  className={`text-[11px] font-semibold ${
-                    feedSource === 'live' ? 'text-emerald-600' : 'text-sky-ink/40'
-                  }`}
-                >
-                  · {feedSource === 'live' ? 'LIVE' : 'SIM'}
-                </span>
+                Nifty chart
               </h2>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -330,7 +372,7 @@ export default function NejoicWorkspace() {
             <button
               type="button"
               disabled={locked || !signal || signal.bias === 'FLAT' || Boolean(openTrade)}
-              onClick={() => takeSignal()}
+              onClick={() => void takeSignal()}
               className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-40"
             >
               <Target className="h-4 w-4" />
@@ -339,7 +381,7 @@ export default function NejoicWorkspace() {
             <button
               type="button"
               disabled={!openTrade}
-              onClick={() => closeOpen()}
+              onClick={() => void closeOpen()}
               className="inline-flex items-center gap-1.5 rounded-xl border border-[#cfe0ee] px-4 py-2 text-sm font-semibold text-sky-ink hover:bg-sky-soft disabled:opacity-40"
             >
               <Square className="h-4 w-4" />
@@ -482,7 +524,8 @@ export default function NejoicWorkspace() {
 
       <section className="mt-5 rounded-2xl border border-[#cfe0ee]/90 bg-white p-4">
         <h2 className="font-display text-[15px] font-semibold text-sky-ink">
-          Nejoic trades (paper)
+          Nejoic trades (paper) — entry/exit use <strong>live Upstox option LTP</strong> when
+          broker is connected; falls back to estimate only if Upstox is offline.
         </h2>
         {trades.length === 0 ? (
           <p className="mt-3 text-sm text-sky-ink/45">No trades yet.</p>
@@ -530,7 +573,7 @@ export default function NejoicWorkspace() {
                       {t.status === 'open' ? (
                         <button
                           type="button"
-                          onClick={() => closeOpen()}
+                          onClick={() => void closeOpen()}
                           className="rounded-lg bg-rose-500 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-rose-600"
                         >
                           Exit

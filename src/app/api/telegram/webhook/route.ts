@@ -37,19 +37,38 @@ export async function POST(req: NextRequest) {
   const text = String(update.message?.text || '').trim();
   if (!chatId || !text) return NextResponse.json({ ok: true });
 
+  console.log('[telegram webhook]', { chatId, text: text.slice(0, 80) });
+
   if (!isChatAllowed(chatId)) {
-    await sendTelegramMessage(
+    const denied = await sendTelegramMessage(
       chatId,
-      `Nejoic: your chat id is ${chatId}. Add it to TELEGRAM_ALLOWED_CHAT_IDS on the server.`
+      `Nejoic: your chat id is ${chatId}. Add it to TELEGRAM_ALLOWED_CHAT_IDS on the server.`,
+      { bypassAllowList: true }
     );
+    if (!denied.ok) console.error('[telegram send denied-path]', denied.error);
     return NextResponse.json({ ok: true });
   }
 
   try {
     const data = await handleNejoicAsk(text);
-    await sendTelegramMessage(chatId, data.text || 'Nejoic is quiet — try /pulse');
-  } catch {
-    await sendTelegramMessage(chatId, 'Nejoic hit an error. Try /pulse again.');
+    const sent = await sendTelegramMessage(
+      chatId,
+      data.text || 'Nejoic is quiet — try /pulse'
+    );
+    if (!sent.ok) {
+      console.error('[telegram send]', sent.error);
+      // Last-ditch short reply so you see something in Telegram
+      await sendTelegramMessage(
+        chatId,
+        `Nejoic could not reply (${sent.error || 'send failed'}). Send /start then /pulse.`,
+        { bypassAllowList: true }
+      );
+    }
+  } catch (err) {
+    console.error('[telegram ask]', err);
+    await sendTelegramMessage(chatId, 'Nejoic hit an error. Try /pulse again.', {
+      bypassAllowList: true,
+    });
   }
 
   return NextResponse.json({ ok: true });

@@ -2,12 +2,31 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Plus, Search, Trash2, X } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowRight,
+  ArrowUp,
+  Pin,
+  PinOff,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react';
 import InfoBubble from '@/components/ui/InfoBubble';
 import { useWatchlists } from '@/hooks/useWatchlists';
-import { type Exchange } from '@/lib/watchlist';
-import { formatCurrency, formatPercent } from '@/lib/utils';
+import { useLiveQuotes } from '@/hooks/useLiveQuotes';
+import {
+  applyPinPriority,
+  isPinned,
+  isPrimaryCorePin,
+  type Exchange,
+} from '@/lib/watchlist';
+import { INDIA_INDEX_SYMBOLS, resolveIndiaIndex } from '@/lib/india-indices';
+import { cn, formatCurrency, formatPercent } from '@/lib/utils';
 import { SortableTh, useSortable } from '@/components/ui/sortable';
+import SymbolAutocomplete from '@/components/ui/SymbolAutocomplete';
+import { SymbolChartLink } from '@/components/chart/SymbolChartLink';
 
 export default function WatchlistWorkspace() {
   const {
@@ -15,11 +34,15 @@ export default function WatchlistWorkspace() {
     lists,
     active,
     activeId,
+    isPrimaryList,
     setActiveId,
     createList,
     deleteList,
     addSymbol,
     removeSymbol,
+    pinSymbol,
+    unpinSymbol,
+    movePin,
   } = useWatchlists();
 
   const [query, setQuery] = useState('');
@@ -30,19 +53,41 @@ export default function WatchlistWorkspace() {
   const [showAdd, setShowAdd] = useState(false);
   const [newListName, setNewListName] = useState('');
 
+  const liveSymbols = useMemo(
+    () =>
+      (active?.symbols || []).map((s) => ({
+        symbol: s.symbol,
+        exchange: s.exchange,
+      })),
+    [active?.symbols]
+  );
+  const { quotes, live, updatedAt } = useLiveQuotes(liveSymbols, {
+    enabled: ready && liveSymbols.length > 0,
+    intervalMs: 3000,
+  });
+
   const filtered = useMemo(() => {
     if (!active) return [];
     const q = query.trim().toUpperCase();
-    if (!q) return active.symbols;
-    return active.symbols.filter(
+    const rows = active.symbols.map((s) => {
+      const qLive = quotes[s.symbol.toUpperCase()];
+      return {
+        ...s,
+        lastPrice: qLive?.ok ? qLive.lastPrice : s.lastPrice,
+        changePct: qLive?.ok && qLive.changePct != null ? qLive.changePct : s.changePct,
+        liveOk: Boolean(qLive?.ok),
+      };
+    });
+    if (!q) return rows;
+    return rows.filter(
       (s) =>
         s.symbol.includes(q) ||
         s.name.toUpperCase().includes(q) ||
         s.notes.toUpperCase().includes(q)
     );
-  }, [active, query]);
+  }, [active, query, quotes]);
 
-  const { sorted: displayRows, sort, toggle } = useSortable(
+  const { sorted: sortedRows, sort, toggle } = useSortable(
     filtered,
     (row, key) => {
       switch (key) {
@@ -60,7 +105,14 @@ export default function WatchlistWorkspace() {
           return '';
       }
     },
-    { key: 'symbol', dir: 'asc' }
+    { dir: 'asc' }
+  );
+
+  // Pinned indices stay on top (#1 NIFTY, #2 SENSEX, then other pins);
+  // everything else follows the active sort (change / exchange / …).
+  const displayRows = useMemo(
+    () => applyPinPriority(sortedRows),
+    [sortedRows]
   );
 
   function handleAdd(e: React.FormEvent) {
@@ -102,10 +154,19 @@ export default function WatchlistWorkspace() {
               Watchlist
             </h1>
             <InfoBubble title="About Watchlist">
-              Track NSE &amp; BSE symbols you care about. Prices shown are sample values until a broker
-              feed is connected.
+              Primary list always keeps NIFTY (#1) and SENSEX (#2) on top. Pin
+              other symbols to keep them above sorts. Sorting by change/exchange
+              only rearranges unpinned rows.
             </InfoBubble>
           </div>
+          <p className="mt-1 text-[11px] font-semibold text-sky-ink/45">
+            {live ? (
+              <span className="text-emerald-600">Live</span>
+            ) : (
+              <span>Updating…</span>
+            )}
+            {updatedAt ? ` · ${new Date(updatedAt).toLocaleTimeString('en-IN')}` : ''}
+          </p>
         </div>
         <button
           type="button"
@@ -186,7 +247,7 @@ export default function WatchlistWorkspace() {
             </p>
             <p className="mx-auto mt-2 max-w-md text-sm text-sky-ink/55">
               {active.symbols.length === 0
-                ? 'Add RELIANCE, NIFTY 50, or any NSE/BSE symbol to start tracking.'
+                ? 'Add NIFTY, BANKNIFTY, SENSEX, or any NSE/BSE symbol to start tracking.'
                 : 'Try another search.'}
             </p>
             {active.symbols.length === 0 && (
@@ -205,6 +266,9 @@ export default function WatchlistWorkspace() {
             <table className="w-full min-w-[640px] text-left text-sm">
               <thead>
                 <tr className="border-b border-[#e8f2fa] bg-sky-soft/60">
+                  <th className="px-3 py-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-ink/45">
+                    #
+                  </th>
                   <SortableTh
                     label="Symbol"
                     className="px-4 py-3"
@@ -220,7 +284,7 @@ export default function WatchlistWorkspace() {
                     onClick={() => toggle('exchange')}
                   />
                   <SortableTh
-                    label="Last (sample)"
+                    label="Live LTP"
                     className="px-4 py-3"
                     active={sort.key === 'lastPrice'}
                     dir={sort.dir}
@@ -233,26 +297,49 @@ export default function WatchlistWorkspace() {
                     dir={sort.dir}
                     onClick={() => toggle('changePct')}
                   />
-                  <SortableTh
-                    label="Notes"
-                    className="px-4 py-3"
-                    active={sort.key === 'notes'}
-                    dir={sort.dir}
-                    onClick={() => toggle('notes')}
-                  />
                   <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-ink/45">
-                    Remove
+                    Pin / Remove
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {displayRows.map((row) => (
+                {displayRows.map((row) => {
+                  const pinned = isPinned(row);
+                  const core =
+                    isPrimaryList && isPrimaryCorePin(row);
+                  return (
                   <tr
                     key={row.id}
-                    className="border-b border-[#e8f2fa] last:border-0 hover:bg-sky-soft/40"
+                    className={cn(
+                      'border-b border-[#e8f2fa] last:border-0 hover:bg-sky-soft/40',
+                      pinned && 'bg-amber-50/40'
+                    )}
                   >
+                    <td className="px-3 py-3 tabular-nums text-[11px] font-bold text-sky-ink/45">
+                      {pinned ? (
+                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-amber-100 text-amber-800">
+                          {row.pinOrder}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
                     <td className="px-4 py-3">
-                      <p className="font-semibold text-sky-ink">{row.symbol}</p>
+                      <div className="flex items-center gap-1.5">
+                        <SymbolChartLink
+                          symbol={row.symbol}
+                          exchange={row.exchange}
+                          name={row.name}
+                          className="font-semibold"
+                        >
+                          {row.symbol}
+                        </SymbolChartLink>
+                        {pinned && (
+                          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-800">
+                            pinned
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[11px] text-sky-ink/40">{row.name}</p>
                     </td>
                     <td className="px-4 py-3 text-sky-ink/65">{row.exchange}</td>
@@ -260,31 +347,81 @@ export default function WatchlistWorkspace() {
                       {row.lastPrice > 0 ? formatCurrency(row.lastPrice) : '—'}
                     </td>
                     <td
-                      className={`px-4 py-3 font-semibold tabular-nums ${
+                      className={cn(
+                        'px-4 py-3 font-semibold tabular-nums',
                         row.changePct > 0
                           ? 'text-emerald-600'
                           : row.changePct < 0
                             ? 'text-rose-500'
                             : 'text-sky-ink/50'
-                      }`}
+                      )}
                     >
                       {row.lastPrice > 0 ? formatPercent(row.changePct) : '—'}
                     </td>
-                    <td className="max-w-[180px] truncate px-4 py-3 text-sky-ink/55">
-                      {row.notes || '—'}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => removeSymbol(row.id)}
-                        className="rounded-lg p-2 text-sky-ink/40 hover:bg-rose-50 hover:text-rose-500"
-                        title="Remove"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-0.5">
+                        {pinned ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => movePin(row.id, 'up')}
+                              disabled={core || row.pinOrder === 1}
+                              className="rounded-lg p-1.5 text-sky-ink/40 hover:bg-sky-soft hover:text-sky-deep disabled:opacity-30"
+                              title="Move pin up"
+                            >
+                              <ArrowUp className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => movePin(row.id, 'down')}
+                              disabled={core}
+                              className="rounded-lg p-1.5 text-sky-ink/40 hover:bg-sky-soft hover:text-sky-deep disabled:opacity-30"
+                              title="Move pin down"
+                            >
+                              <ArrowDown className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => unpinSymbol(row.id)}
+                              disabled={core}
+                              className="rounded-lg p-1.5 text-sky-ink/40 hover:bg-amber-50 hover:text-amber-700 disabled:opacity-30"
+                              title={
+                                core
+                                  ? 'NIFTY & SENSEX stay pinned'
+                                  : 'Unpin'
+                              }
+                            >
+                              <PinOff className="h-3.5 w-3.5" />
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => pinSymbol(row.id)}
+                            className="rounded-lg p-1.5 text-sky-ink/40 hover:bg-amber-50 hover:text-amber-700"
+                            title="Pin to top"
+                          >
+                            <Pin className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeSymbol(row.id)}
+                          disabled={core}
+                          className="rounded-lg p-2 text-sky-ink/40 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-30"
+                          title={
+                            core
+                              ? 'NIFTY & SENSEX stay on primary list'
+                              : 'Remove'
+                          }
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -340,13 +477,36 @@ export default function WatchlistWorkspace() {
                 <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-sky-ink/45">
                   Symbol
                 </span>
-                <input
+                <SymbolAutocomplete
                   value={symbol}
-                  onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-                  placeholder="RELIANCE"
+                  onChange={setSymbol}
+                  onPick={(item) => {
+                    setSymbol(item.symbol);
+                    setExchange(item.exchange);
+                  }}
+                  exchange={exchange}
+                  placeholder="Search NIFTY, BANKNIFTY, scrips…"
                   className={inputClass}
                   required
                 />
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {INDIA_INDEX_SYMBOLS.slice(0, 10).map((sym) => {
+                    const meta = resolveIndiaIndex(sym);
+                    return (
+                      <button
+                        key={sym}
+                        type="button"
+                        onClick={() => {
+                          setSymbol(sym);
+                          setExchange(meta?.exchange || 'NSE');
+                        }}
+                        className="rounded-full bg-sky-soft px-2.5 py-1 text-[10px] font-bold text-sky-deep ring-1 ring-[#cfe0ee] hover:bg-sky-deep hover:text-white"
+                      >
+                        {sym}
+                      </button>
+                    );
+                  })}
+                </div>
               </label>
               <label className="block">
                 <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-sky-ink/45">

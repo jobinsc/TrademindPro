@@ -34,6 +34,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/components/auth/AuthProvider';
+import TradeMindLogo from '@/components/app/TradeMindLogo';
+import { hrefWithFrom } from '@/lib/nav-return';
 
 type NavItem = {
   href: string;
@@ -68,6 +70,7 @@ const navGroups: NavGroup[] = [
   {
     title: 'Live Terminal',
     items: [
+      { href: '/app/chart', label: 'Charts', icon: CandlestickChart },
       { href: '/app/terminal', label: 'Broker Terminal', icon: Monitor },
       { href: '/app/positions', label: 'Positions & Orders', icon: ListOrdered },
       { href: '/app/holdings', label: 'Holdings & Portfolio', icon: Briefcase },
@@ -78,7 +81,7 @@ const navGroups: NavGroup[] = [
     title: 'NSE & BSE Scanner',
     items: [
       { href: '/app/scanner', label: 'Stock Scanner', icon: Radar },
-      { href: '/app/options-scanner', label: 'Options Scanner', icon: CandlestickChart },
+      { href: '/app/options-scanner', label: 'Options Scanner', icon: LineChart },
       { href: '/app/alerts', label: 'Alerts', icon: Bell },
     ],
   },
@@ -159,14 +162,14 @@ function NavLink({
       title={label}
       onClick={() => onNavigate?.()}
       className={cn(
-        'relative flex items-center gap-2.5 rounded-xl py-2 text-[13px] font-medium transition',
+        'relative flex items-center gap-2.5 rounded-xl py-2 text-[13px] font-semibold transition',
         collapsed ? 'justify-center px-2' : nested ? 'px-3 pl-9' : 'px-3',
         active
-          ? 'bg-white/90 text-sky-deep shadow-[inset_3px_0_0_0_#1a6ba8]'
-          : 'text-sky-ink/70 hover:bg-white/55 hover:text-sky-ink'
+          ? 'bg-white text-sky-deep shadow-[inset_3px_0_0_0_#1a6ba8]'
+          : 'text-sky-ink/80 hover:bg-white/70 hover:text-sky-ink'
       )}
     >
-      <Icon className={cn('shrink-0', nested ? 'h-3.5 w-3.5' : 'h-4 w-4')} strokeWidth={1.75} />
+      <Icon className={cn('shrink-0', nested ? 'h-3.5 w-3.5' : 'h-4 w-4')} strokeWidth={2} />
       {!collapsed && <span>{label}</span>}
     </Link>
   );
@@ -213,7 +216,7 @@ export default function AppSidebar({
   }
 
   function handleLogout() {
-    logout();
+    void logout();
     onNavigate?.();
     router.push('/');
   }
@@ -237,30 +240,34 @@ export default function AppSidebar({
   return (
     <aside
       className={cn(
-        'flex h-dvh shrink-0 flex-col border-r border-[#b9d7ea] transition-[width] duration-200',
-        'bg-[linear-gradient(180deg,#d9eef8_0%,#e8f4fb_45%,#dff0f9_100%)]',
+        'flex h-dvh min-w-[72px] shrink-0 flex-col border-r border-[#c5dcec] transition-[width] duration-200',
+        'bg-[linear-gradient(180deg,#eaf6fc_0%,#f5fbfe_48%,#e8f4fb_100%)]',
         collapsed ? 'w-[72px]' : 'w-[250px]',
         variant === 'mobile' && 'w-[280px] max-w-[85vw]'
       )}
     >
-      <div className="border-b border-[#c5dcec]/80 px-3 py-3">
-        <div className={cn('flex items-start gap-2', collapsed ? 'flex-col items-center' : '')}>
+      {/* Brand — name only, no caption */}
+      <div className="border-b border-[#d5e6f0] bg-white px-3 py-3">
+        <div className={cn('flex items-center gap-2', collapsed && 'flex-col')}>
           <Link
             href="/app"
             onClick={() => onNavigate?.()}
-            className={cn('min-w-0 flex-1', collapsed && 'text-center')}
+            className={cn(
+              'flex min-w-0 flex-1 items-center gap-3',
+              collapsed && 'justify-center'
+            )}
           >
-            {collapsed ? (
-              <p className="font-display text-[15px] font-bold text-sky-deep">TM</p>
-            ) : (
-              <>
-                <p className="font-display text-[16px] font-semibold tracking-tight text-sky-ink">
-                  TradeMind<span className="text-sky-deep"> Pro</span>
+            <TradeMindLogo size={collapsed ? 34 : 38} />
+            {!collapsed && (
+              <div className="min-w-0">
+                <p className="truncate font-display text-[18px] font-bold leading-none tracking-tight text-[#0F2A3D]">
+                  TradeMind
+                  <span className="text-[#0369A1]"> Pro</span>
                 </p>
-                <p className="mt-0.5 text-[11px] font-medium text-sky-ink/45">
-                  AI Trading Operating System
+                <p className="mt-1.5 truncate text-[11px] font-medium leading-none text-[#6B8496]">
+                  For serious Traders
                 </p>
-              </>
+              </div>
             )}
           </Link>
           {onToggleCollapse && (
@@ -274,7 +281,7 @@ export default function AppSidebar({
                     ? 'Expand sidebar'
                     : 'Collapse sidebar'
               }
-              className="rounded-lg p-1.5 text-sky-deep transition hover:bg-white/70"
+              className="rounded-lg p-1.5 text-[#0369A1] transition hover:bg-[#eef6fb]"
             >
               {variant === 'mobile' ? (
                 <X className="h-4 w-4" strokeWidth={2} />
@@ -289,7 +296,7 @@ export default function AppSidebar({
       </div>
 
       {!collapsed && (
-        <div className="mx-3 mt-3 rounded-xl bg-white/70 px-3 py-2.5 ring-1 ring-[#c5dcec]">
+        <div className="mx-3 mt-3 rounded-xl bg-white px-3 py-2.5 shadow-sm ring-1 ring-[#cfe0ee]">
           <div className="flex items-center justify-between gap-2">
             <p className="truncate text-[13px] font-semibold text-sky-ink">
               {user?.name || 'Trader'}
@@ -300,7 +307,7 @@ export default function AppSidebar({
               </span>
             )}
           </div>
-          <p className="mt-0.5 truncate text-[11px] text-sky-ink/50">{user?.email}</p>
+          <p className="mt-0.5 truncate text-[11px] font-medium text-sky-ink/60">{user?.email}</p>
         </div>
       )}
 
@@ -308,7 +315,7 @@ export default function AppSidebar({
         {visibleGroups.map((group) => (
           <div key={group.title}>
             {!collapsed && (
-              <p className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-ink/40">
+              <p className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-ink/50">
                 {group.title}
               </p>
             )}
@@ -335,7 +342,7 @@ export default function AppSidebar({
                           aria-label={expanded ? `Collapse ${item.label}` : `Expand ${item.label}`}
                           aria-expanded={expanded}
                           onClick={() => toggleMenu(item.href)}
-                          className="mr-1 rounded-lg p-1.5 text-sky-ink/45 transition hover:bg-white/60 hover:text-sky-ink"
+                          className="mr-1 rounded-lg p-1.5 text-sky-ink/50 transition hover:bg-white hover:text-sky-ink"
                         >
                           <ChevronRight
                             className={cn(
@@ -352,7 +359,7 @@ export default function AppSidebar({
                         {item.children!.map((child) => (
                           <NavLink
                             key={child.href}
-                            href={child.href}
+                            href={hrefWithFrom(child.href, item.href)}
                             label={child.label}
                             icon={child.icon}
                             nested
@@ -384,11 +391,11 @@ export default function AppSidebar({
           onClick={handleLogout}
           title="Log out"
           className={cn(
-            'flex w-full items-center gap-2.5 rounded-xl py-2 text-[13px] font-medium text-sky-ink/65 transition hover:bg-rose-50 hover:text-rose-600',
+            'flex w-full items-center gap-2.5 rounded-xl py-2 text-[13px] font-semibold text-sky-ink/75 transition hover:bg-rose-50 hover:text-rose-600',
             collapsed ? 'justify-center px-2' : 'px-3'
           )}
         >
-          <LogOut className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+          <LogOut className="h-4 w-4 shrink-0" strokeWidth={2} />
           {!collapsed && 'Log out'}
         </button>
       </div>

@@ -26,11 +26,14 @@ export function isChatAllowed(chatId: string | number): boolean {
 
 export async function sendTelegramMessage(
   chatId: string | number,
-  text: string
+  text: string,
+  opts?: { bypassAllowList?: boolean }
 ): Promise<{ ok: boolean; error?: string }> {
   const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
   if (!token) return { ok: false, error: 'TELEGRAM_BOT_TOKEN missing' };
-  if (!isChatAllowed(chatId)) return { ok: false, error: 'Chat not allowed' };
+  if (!opts?.bypassAllowList && !isChatAllowed(chatId)) {
+    return { ok: false, error: 'Chat not allowed' };
+  }
 
   // Telegram limit ~4096 chars
   const chunks: string[] = [];

@@ -164,6 +164,43 @@ export default function AnalyticsWorkspace() {
           </div>
         </Panel>
 
+        <Panel title="By trade style" subtitle="Intraday · Swing · Positional (separate)">
+          <ul className="space-y-2.5">
+            {analytics.byStyle.every((r) => r.count === 0) ? (
+              <li className="text-sm text-sky-ink/45">
+                Log trades with a style in Journal to see split analysis here.
+              </li>
+            ) : (
+              analytics.byStyle.map((row) => (
+                <li
+                  key={row.name}
+                  className="flex items-center justify-between rounded-xl border border-[#e8f2fa] bg-[#f7fbfe] px-3 py-2.5"
+                >
+                  <div>
+                    <p className="text-sm font-bold text-sky-ink">{row.name}</p>
+                    <p className="text-[11px] font-medium text-sky-ink/45">
+                      {row.count} trades · win {row.winRate.toFixed(0)}%
+                    </p>
+                  </div>
+                  <p
+                    className={`text-sm font-bold tabular-nums ${
+                      row.pnl > 0
+                        ? 'text-emerald-600'
+                        : row.pnl < 0
+                          ? 'text-rose-500'
+                          : 'text-sky-ink'
+                    }`}
+                  >
+                    {formatCurrency(row.pnl)}
+                  </p>
+                </li>
+              ))
+            )}
+          </ul>
+        </Panel>
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <Panel title="P&L by strategy" subtitle="Which setups make money">
           <div className="h-56 w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -189,9 +226,7 @@ export default function AnalyticsWorkspace() {
             </ResponsiveContainer>
           </div>
         </Panel>
-      </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <Panel title="P&L by symbol" subtitle="Top instruments">
           <div className="h-56 w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -212,7 +247,9 @@ export default function AnalyticsWorkspace() {
             </ResponsiveContainer>
           </div>
         </Panel>
+      </div>
 
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <Panel title="P&L by emotion" subtitle="How mindset affects results">
           <ul className="space-y-2.5">
             {analytics.byEmotion.length === 0 ? (

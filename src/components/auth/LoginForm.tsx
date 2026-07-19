@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/components/auth/AuthProvider';
 
 export default function LoginForm() {
-  const { login, user, ready } = useAuth();
+  const { login, user, ready, cloudEnabled } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -38,6 +38,11 @@ export default function LoginForm() {
             TradeMind<span className="text-sky-deep"> Pro</span>
           </Link>
           <p className="mt-2 text-sm text-sky-ink/55">Log in to your trading OS</p>
+          {cloudEnabled && (
+            <p className="mt-2 text-[12px] text-emerald-700">
+              Cloud login on — your data saves online (friends can each have their own account)
+            </p>
+          )}
         </div>
 
         <form

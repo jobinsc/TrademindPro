@@ -29,6 +29,41 @@ function rsi(closes: number[], period: number): number {
   return 100 - 100 / (1 + rs);
 }
 
+function macdLine(closes: number[]): { macd: number[]; signal: number[] } {
+  const fast = ema(closes, 12);
+  const slow = ema(closes, 26);
+  const macd = fast.map((f, i) => f - slow[i]);
+  const signal = ema(macd, 9);
+  return { macd, signal };
+}
+
+/** Approx VWAP from typical price (equal weight when volume missing). */
+function sessionVwap(candles: Candle[]): number[] {
+  const out: number[] = [];
+  let cumTp = 0;
+  let cumVol = 0;
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i];
+    const tp = (c.high + c.low + c.close) / 3;
+    // Synthetic volume from range so recent bars matter a bit more
+    const vol = Math.max(1, c.high - c.low);
+    cumTp += tp * vol;
+    cumVol += vol;
+    out.push(cumVol > 0 ? cumTp / cumVol : tp);
+  }
+  return out;
+}
+
+function minutesFromOpenIst(iso: string): number | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  // IST = UTC+5:30
+  const utcMin = d.getUTCHours() * 60 + d.getUTCMinutes();
+  const istMin = (utcMin + 330) % (24 * 60);
+  const open = 9 * 60 + 15; // 09:15
+  return istMin - open;
+}
+
 export type StrategyRead = {
   bias: OptionBias;
   setup: string;
@@ -46,6 +81,7 @@ export function runNejoicStrategy(
     rsiOversold: number;
     rsiOverbought: number;
     breakoutLookback: number;
+    orbMinutes?: number;
   }
 ): StrategyRead | null {
   const closes = candles.map((c) => c.close);
@@ -136,6 +172,115 @@ export function runNejoicStrategy(
       setup: 'RANGE_WAIT',
       confidence: 42,
       reason: `Inside range ₹${lo.toFixed(0)}–₹${hi.toFixed(0)}.`,
+    };
+  }
+
+  if (strategy === 'orb') {
+    const minutes = Math.max(5, Math.min(60, opts.orbMinutes ?? 15));
+    const orBars = candles.filter((c) => {
+      const m = minutesFromOpenIst(c.t);
+      return m != null && m >= 0 && m < minutes;
+    });
+    // Fallback: first N bars of series if timestamps aren't session-aligned
+    const rangeBars = orBars.length >= 2 ? orBars : candles.slice(0, Math.min(candles.length - 2, 3));
+    if (rangeBars.length < 2) {
+      return {
+        bias: 'FLAT',
+        setup: 'ORB_WAIT',
+        confidence: 35,
+        reason: 'Opening range not formed yet.',
+      };
+    }
+    const orHigh = Math.max(...rangeBars.map((c) => c.high));
+    const orLow = Math.min(...rangeBars.map((c) => c.low));
+    const prev = closes[closes.length - 2] ?? spot;
+    const brokeUp = prev <= orHigh && spot > orHigh;
+    const brokeDn = prev >= orLow && spot < orLow;
+    if (brokeUp || spot > orHigh * 1.0002) {
+      return {
+        bias: 'CE',
+        setup: 'ORB_BREAK_HIGH',
+        confidence: brokeUp ? 76 : 64,
+        reason: `ORB ${minutes}m high ₹${orHigh.toFixed(0)} broken → CE.`,
+      };
+    }
+    if (brokeDn || spot < orLow * 0.9998) {
+      return {
+        bias: 'PE',
+        setup: 'ORB_BREAK_LOW',
+        confidence: brokeDn ? 76 : 64,
+        reason: `ORB ${minutes}m low ₹${orLow.toFixed(0)} broken → PE.`,
+      };
+    }
+    return {
+      bias: 'FLAT',
+      setup: 'ORB_INSIDE',
+      confidence: 44,
+      reason: `Inside ORB ₹${orLow.toFixed(0)}–₹${orHigh.toFixed(0)} (${minutes}m).`,
+    };
+  }
+
+  if (strategy === 'vwap_reclaim') {
+    const vwap = sessionVwap(candles);
+    const i = closes.length - 1;
+    const v = vwap[i];
+    const prevV = vwap[i - 1];
+    const prevC = closes[i - 1];
+    const reclaim = prevC <= prevV && spot > v;
+    const reject = prevC >= prevV && spot < v;
+    if (reclaim) {
+      return {
+        bias: 'CE',
+        setup: 'VWAP_RECLAIM',
+        confidence: 74,
+        reason: `Reclaimed VWAP ₹${v.toFixed(0)} → CE.`,
+      };
+    }
+    if (reject) {
+      return {
+        bias: 'PE',
+        setup: 'VWAP_REJECT',
+        confidence: 74,
+        reason: `Rejected from VWAP ₹${v.toFixed(0)} → PE.`,
+      };
+    }
+    const above = spot > v;
+    return {
+      bias: 'FLAT',
+      setup: above ? 'VWAP_ABOVE_WAIT' : 'VWAP_BELOW_WAIT',
+      confidence: 42,
+      reason: `Price ${above ? 'above' : 'below'} VWAP ₹${v.toFixed(0)} — wait for cross.`,
+    };
+  }
+
+  if (strategy === 'macd_cross') {
+    const { macd, signal } = macdLine(closes);
+    const i = closes.length - 1;
+    if (i < 1) return null;
+    const crossUp = macd[i - 1] <= signal[i - 1] && macd[i] > signal[i];
+    const crossDn = macd[i - 1] >= signal[i - 1] && macd[i] < signal[i];
+    if (crossUp) {
+      return {
+        bias: 'CE',
+        setup: 'MACD_CROSS_UP',
+        confidence: 71,
+        reason: 'MACD crossed above signal → CE.',
+      };
+    }
+    if (crossDn) {
+      return {
+        bias: 'PE',
+        setup: 'MACD_CROSS_DOWN',
+        confidence: 71,
+        reason: 'MACD crossed below signal → PE.',
+      };
+    }
+    const bull = macd[i] > signal[i];
+    return {
+      bias: 'FLAT',
+      setup: bull ? 'MACD_BULL_WAIT' : 'MACD_BEAR_WAIT',
+      confidence: 43,
+      reason: `MACD ${macd[i].toFixed(1)} vs signal ${signal[i].toFixed(1)} — no fresh cross.`,
     };
   }
 

@@ -1,6 +1,7 @@
 import { gunzipSync } from 'zlib';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
+import { searchIndiaIndices } from '@/lib/india-indices';
 
 export type EquityInstrument = {
   symbol: string;
@@ -158,6 +159,20 @@ export async function searchInstruments(opts: {
   const q = (opts.q || '').trim().toUpperCase();
   const limit = Math.min(Math.max(opts.limit || 50, 1), 500);
 
+  // Indices first — not in Upstox equity BOD files
+  const indexHits = searchIndiaIndices(q || '', Math.min(limit, 22))
+    .filter((i) => exchange === 'ALL' || i.exchange === exchange)
+    .map(
+      (i): EquityInstrument => ({
+        symbol: i.symbol,
+        name: i.name,
+        exchange: i.exchange,
+        instrumentKey: `INDEX|${i.exchange}|${i.symbol}`,
+        isin: '',
+        segment: `${i.exchange}_INDEX`,
+      })
+    );
+
   let filtered = all;
   if (exchange === 'NSE' || exchange === 'BSE') {
     filtered = filtered.filter((i) => i.exchange === exchange);
@@ -169,9 +184,28 @@ export async function searchInstruments(opts: {
         i.name.toUpperCase().includes(q) ||
         i.isin.toUpperCase().includes(q)
     );
+    // Prefer symbol prefix matches (BHAR → BHARTIARTL before random name hits)
+    filtered = [...filtered].sort((a, b) => {
+      const aStarts = a.symbol.startsWith(q) ? 0 : a.symbol.includes(q) ? 1 : 2;
+      const bStarts = b.symbol.startsWith(q) ? 0 : b.symbol.includes(q) ? 1 : 2;
+      if (aStarts !== bStarts) return aStarts - bStarts;
+      return a.symbol.localeCompare(b.symbol);
+    });
+  } else {
+    // Empty query: show indices + start of equity universe
+    filtered = filtered.slice(0, Math.max(0, limit - indexHits.length));
   }
 
-  return { total: filtered.length, items: filtered.slice(0, limit) };
+  const seen = new Set(indexHits.map((i) => i.symbol));
+  const merged = [
+    ...indexHits,
+    ...filtered.filter((i) => !seen.has(i.symbol)),
+  ].slice(0, limit);
+
+  return {
+    total: indexHits.length + filtered.length,
+    items: merged,
+  };
 }
 
 /** Resolve trading symbols → instrument keys (NSE preferred) */

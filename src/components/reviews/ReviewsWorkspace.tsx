@@ -3,7 +3,6 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
-  ArrowRight,
   Check,
   Lightbulb,
   Plus,
@@ -11,6 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import InfoBubble from '@/components/ui/InfoBubble';
+import BackToLink from '@/components/ui/BackToLink';
 import { useTrades } from '@/hooks/useTrades';
 import { useReviews } from '@/hooks/useReviews';
 import {
@@ -350,13 +350,11 @@ export default function ReviewsWorkspace() {
       </section>
 
       <div className="mt-6">
-        <Link
-          href="/app/journal"
+        <BackToLink
+          fallback="/app/journal"
+          label="Back to Trade Journal"
           className="inline-flex items-center gap-1.5 text-sm font-semibold text-sky-deep hover:underline"
-        >
-          Back to Trade Journal
-          <ArrowRight className="h-4 w-4" />
-        </Link>
+        />
       </div>
 
       {/* Review form drawer */}

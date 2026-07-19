@@ -36,6 +36,11 @@ export async function GET(req: NextRequest) {
       try {
         localStorage.setItem('trademindpro_upstox_token_v1', ${JSON.stringify(token.access_token)});
         localStorage.setItem('trademindpro_upstox_connected_at_v1', ${JSON.stringify(new Date().toISOString())});
+        ${
+          token.extended_token
+            ? `localStorage.setItem('trademindpro_upstox_extended_v1', ${JSON.stringify(token.extended_token)});`
+            : ''
+        }
       } catch (e) {}
       location.replace('/app/terminal?upstox=connected');
     </script><p>Connecting Upstox…</p></body></html>`;

@@ -4,7 +4,9 @@ import type {
   NejoicStrategyId,
   NejoicTimeframeId,
 } from '@/lib/nejoic-options';
+import { normalizeStrategyIds, strategyLabel } from '@/lib/nejoic-options';
 import { runNejoicStrategy } from '@/lib/nejoic-strategy';
+import { isIndiaCashSession } from '@/lib/market-desk';
 
 export const NEJOIC_NAME = 'Nejoic';
 
@@ -24,8 +26,10 @@ export type NejoicSettings = {
   minConfidence: number;
   /** @deprecated mapped from analysisStyle */
   setupStyle: 'strict_hl_lh' | 'balanced';
-  /** Which brain strategy Nejoic uses */
+  /** @deprecated prefer strategyIds — kept for migration */
   strategyId: NejoicStrategyId;
+  /** Strategies Nejoic evaluates (multi-select) */
+  strategyIds: NejoicStrategyId[];
   /** How strict signals are */
   analysisStyle: NejoicAnalysisStyle;
   /** Main timeframe for Pulse + auto */
@@ -38,6 +42,8 @@ export type NejoicSettings = {
   rsiOversold: number;
   rsiOverbought: number;
   breakoutLookback: number;
+  /** Opening range minutes for ORB strategy */
+  orbMinutes: number;
   respectLunchHour: boolean;
   tradeOnlyMarketHours: boolean;
   /**
@@ -51,6 +57,17 @@ export type NejoicSettings = {
   askMode: 'rules' | 'nejoic_math';
   /** Push paper trade + signal nutshells to Telegram when configured */
   telegramNotify: boolean;
+  /**
+   * Telegram report instrument.
+   * AUTO = desk rules (India→Nifty, after hours→Gold, weekend→BTC)
+   */
+  telegramInstrument: 'AUTO' | 'NIFTY' | 'GOLD' | 'BTC';
+  /** Timeframe used for Telegram Live Pulse reports */
+  telegramTimeframe: NejoicTimeframeId;
+  /** Minutes between Telegram heartbeat reports */
+  telegramHeartbeatMinutes: number;
+  /** Append study parameters block to every Telegram message */
+  telegramIncludeStudies: boolean;
   mode: NejoicMode;
   autoTrade: boolean;
   status: NejoicStatus;
@@ -99,6 +116,10 @@ export type NejoicTrade = {
   pnl: number | null;
   status: 'open' | 'closed';
   note: string;
+  /** Upstox instrument key when entry used live LTP */
+  instrumentKey?: string | null;
+  premiumSource?: 'upstox' | 'estimate';
+  expiry?: string | null;
 };
 
 export type NejoicDay = {
@@ -135,6 +156,7 @@ export function defaultNejoicSettings(): NejoicSettings {
     minConfidence: 70,
     setupStyle: 'strict_hl_lh',
     strategyId: 'price_action_hhll',
+    strategyIds: ['price_action_hhll', 'swing_hl'],
     analysisStyle: 'strict',
     primaryTimeframe: '5m',
     watchTimeframes: ['15m', '1D', '1W'],
@@ -144,11 +166,16 @@ export function defaultNejoicSettings(): NejoicSettings {
     rsiOversold: 30,
     rsiOverbought: 70,
     breakoutLookback: 20,
+    orbMinutes: 15,
     respectLunchHour: true,
     tradeOnlyMarketHours: true,
     ignoreDailyLimits: false,
     askMode: 'nejoic_math',
     telegramNotify: true,
+    telegramInstrument: 'AUTO',
+    telegramTimeframe: '15m',
+    telegramHeartbeatMinutes: 15,
+    telegramIncludeStudies: true,
     mode: 'paper',
     autoTrade: false,
     status: 'idle',
@@ -169,12 +196,14 @@ export function confidenceForStyle(style: NejoicAnalysisStyle, base: number): nu
 }
 
 export function analyzeOptsFromSettings(s: NejoicSettings) {
+  const strategyIds = normalizeStrategyIds(s.strategyIds, s.strategyId);
   return {
     leftBars: s.leftBars ?? 5,
     rightBars: s.rightBars ?? 5,
     setupStyle: s.setupStyle ?? styleToSetup(s.analysisStyle ?? 'strict'),
     minConfidence: s.minConfidence ?? 70,
-    strategyId: s.strategyId ?? 'price_action_hhll',
+    strategyId: strategyIds[0] ?? 'price_action_hhll',
+    strategyIds,
     analysisStyle: s.analysisStyle ?? 'strict',
     emaFast: s.emaFast ?? 9,
     emaSlow: s.emaSlow ?? 21,
@@ -182,6 +211,7 @@ export function analyzeOptsFromSettings(s: NejoicSettings) {
     rsiOversold: s.rsiOversold ?? 30,
     rsiOverbought: s.rsiOverbought ?? 70,
     breakoutLookback: s.breakoutLookback ?? 20,
+    orbMinutes: s.orbMinutes ?? 15,
   } as const;
 }
 
@@ -240,20 +270,24 @@ export function tickNifty(candles: Candle[]): Candle[] {
 
 export function analyzeNifty(
   candles: Candle[],
-  settings?: Pick<
-    NejoicSettings,
-    | 'leftBars'
-    | 'rightBars'
-    | 'setupStyle'
-    | 'minConfidence'
-    | 'strategyId'
-    | 'analysisStyle'
-    | 'emaFast'
-    | 'emaSlow'
-    | 'rsiPeriod'
-    | 'rsiOversold'
-    | 'rsiOverbought'
-    | 'breakoutLookback'
+  settings?: Partial<
+    Pick<
+      NejoicSettings,
+      | 'leftBars'
+      | 'rightBars'
+      | 'setupStyle'
+      | 'minConfidence'
+      | 'strategyId'
+      | 'strategyIds'
+      | 'analysisStyle'
+      | 'emaFast'
+      | 'emaSlow'
+      | 'rsiPeriod'
+      | 'rsiOversold'
+      | 'rsiOverbought'
+      | 'breakoutLookback'
+      | 'orbMinutes'
+    >
   >
 ): NejoicSignal {
   const spot = candles[candles.length - 1]?.close ?? 24850;
@@ -264,74 +298,152 @@ export function analyzeNifty(
     analysisStyle,
     settings?.minConfidence ?? 70
   );
-  const strategyId = settings?.strategyId ?? 'price_action_hhll';
+  const strategyIds = normalizeStrategyIds(settings?.strategyIds, settings?.strategyId);
 
-  const usePa =
-    strategyId === 'price_action_hhll' || strategyId === 'swing_hl';
+  type Vote = {
+    id: NejoicStrategyId;
+    bias: OptionBias;
+    setup: string;
+    confidence: number;
+    reason: string;
+  };
+
+  const votes: Vote[] = [];
+
+  // Shared PA levels for chart context
+  const paLevels = runPriceAction(candles, {
+    leftBars: settings?.leftBars ?? 5,
+    rightBars: settings?.rightBars ?? 5,
+  });
+
+  for (const strategyId of strategyIds) {
+    const usePa =
+      strategyId === 'price_action_hhll' || strategyId === 'swing_hl';
+
+    if (usePa) {
+      const lb =
+        strategyId === 'swing_hl'
+          ? Math.max(settings?.leftBars ?? 5, 5)
+          : settings?.leftBars ?? 5;
+      const rb =
+        strategyId === 'swing_hl'
+          ? Math.max(settings?.rightBars ?? 5, 5)
+          : settings?.rightBars ?? 5;
+      const pa = runPriceAction(candles, { leftBars: lb, rightBars: rb });
+      let bias = pa.bias;
+      let setup = pa.setup;
+      let confidence = pa.confidence;
+      let reason = pa.entryHint;
+
+      if (setupStyle === 'strict_hl_lh' || analysisStyle === 'strict') {
+        const allowed = setup === 'HL_IN_UPTREND' || setup === 'LH_IN_DOWNTREND';
+        if (!allowed) {
+          bias = 'FLAT';
+          setup = setup.startsWith('WAIT') ? setup : 'WAIT_STRICT';
+          confidence = Math.min(confidence, 55);
+          reason =
+            'Strict mode: only Higher Low → CE or Lower High → PE. Waiting for that print.';
+        }
+      }
+
+      // Long card = CE side only; Short card = PE side only
+      if (strategyId === 'price_action_hhll' && bias === 'PE') {
+        bias = 'FLAT';
+        setup = 'PA_LONG_WAIT';
+        confidence = Math.min(confidence, 50);
+        reason = 'Long PA selected — ignoring PE setups.';
+      }
+      if (strategyId === 'swing_hl' && bias === 'CE') {
+        bias = 'FLAT';
+        setup = 'PA_SHORT_WAIT';
+        confidence = Math.min(confidence, 50);
+        reason = 'Short PA selected — ignoring CE setups.';
+      }
+
+      votes.push({
+        id: strategyId,
+        bias,
+        setup,
+        confidence,
+        reason: `${pa.structureText} ${reason}`.trim(),
+      });
+    } else {
+      const alt = runNejoicStrategy(strategyId, candles, {
+        emaFast: settings?.emaFast ?? 9,
+        emaSlow: settings?.emaSlow ?? 21,
+        rsiPeriod: settings?.rsiPeriod ?? 14,
+        rsiOversold: settings?.rsiOversold ?? 30,
+        rsiOverbought: settings?.rsiOverbought ?? 70,
+        breakoutLookback: settings?.breakoutLookback ?? 20,
+        orbMinutes: settings?.orbMinutes ?? 15,
+      });
+      if (alt) {
+        votes.push({
+          id: strategyId,
+          bias: alt.bias,
+          setup: alt.setup,
+          confidence: alt.confidence,
+          reason: alt.reason,
+        });
+      }
+    }
+  }
+
+  const actionable = votes
+    .filter((v) => v.bias !== 'FLAT' && v.confidence >= minConf)
+    .sort((a, b) => b.confidence - a.confidence);
 
   let bias: OptionBias = 'FLAT';
   let setup = 'WAIT';
   let confidence = 40;
   let entryHint = '';
-  let structureText = '';
-  let lastLabel: StructureLabel | null = null;
-  let trend: 1 | -1 | 0 = 0;
-  let support: number | null = null;
-  let resistance: number | null = null;
-  let labels: NejoicSignal['labels'] = [];
+  let structureText = paLevels.structureText;
+  let winningIds: NejoicStrategyId[] = [];
 
-  if (usePa) {
-    const lb = strategyId === 'swing_hl' ? Math.max(settings?.leftBars ?? 5, 8) : settings?.leftBars ?? 5;
-    const rb = strategyId === 'swing_hl' ? Math.max(settings?.rightBars ?? 5, 8) : settings?.rightBars ?? 5;
-    const pa = runPriceAction(candles, { leftBars: lb, rightBars: rb });
-    bias = pa.bias;
-    setup = pa.setup;
-    confidence = pa.confidence;
-    entryHint = pa.entryHint;
-    structureText = pa.structureText;
-    lastLabel = pa.lastLabel;
-    trend = pa.trend;
-    support = pa.support;
-    resistance = pa.resistance;
-    labels = pa.labels.slice(-12);
-
-    if (setupStyle === 'strict_hl_lh' || analysisStyle === 'strict') {
-      const allowed = setup === 'HL_IN_UPTREND' || setup === 'LH_IN_DOWNTREND';
-      if (!allowed) {
+  if (actionable.length) {
+    const best = actionable[0];
+    const ce = actionable.filter((v) => v.bias === 'CE');
+    const pe = actionable.filter((v) => v.bias === 'PE');
+    // Conflict: both sides clear → stay flat unless one side dominates by 12+ pts
+    if (ce.length && pe.length) {
+      const bestCe = ce[0];
+      const bestPe = pe[0];
+      if (Math.abs(bestCe.confidence - bestPe.confidence) < 12) {
         bias = 'FLAT';
-        setup = setup.startsWith('WAIT') ? setup : 'WAIT_STRICT';
-        confidence = Math.min(confidence, 55);
-        entryHint =
-          'Strict mode: only Higher Low → CE or Lower High → PE. Waiting for that print.';
+        setup = 'STRATEGY_CONFLICT';
+        confidence = Math.min(bestCe.confidence, bestPe.confidence);
+        entryHint = `Conflict: ${strategyLabel(bestCe.id)} wants CE (${bestCe.confidence}%) vs ${strategyLabel(bestPe.id)} wants PE (${bestPe.confidence}%). Wait.`;
+        winningIds = [bestCe.id, bestPe.id];
+      } else if (bestCe.confidence >= bestPe.confidence) {
+        bias = 'CE';
+        setup = bestCe.setup;
+        confidence = bestCe.confidence;
+        entryHint = bestCe.reason;
+        winningIds = ce.map((v) => v.id);
+      } else {
+        bias = 'PE';
+        setup = bestPe.setup;
+        confidence = bestPe.confidence;
+        entryHint = bestPe.reason;
+        winningIds = pe.map((v) => v.id);
       }
+    } else {
+      bias = best.bias;
+      setup = best.setup;
+      confidence = best.confidence;
+      entryHint = best.reason;
+      winningIds = actionable.filter((v) => v.bias === best.bias).map((v) => v.id);
     }
+    structureText =
+      votes.find((v) => v.id === best.id)?.reason || paLevels.structureText;
   } else {
-    const alt = runNejoicStrategy(strategyId, candles, {
-      emaFast: settings?.emaFast ?? 9,
-      emaSlow: settings?.emaSlow ?? 21,
-      rsiPeriod: settings?.rsiPeriod ?? 14,
-      rsiOversold: settings?.rsiOversold ?? 30,
-      rsiOverbought: settings?.rsiOverbought ?? 70,
-      breakoutLookback: settings?.breakoutLookback ?? 20,
-    });
-    if (alt) {
-      bias = alt.bias;
-      setup = alt.setup;
-      confidence = alt.confidence;
-      entryHint = alt.reason;
-      structureText = alt.reason;
+    const bestWait = [...votes].sort((a, b) => b.confidence - a.confidence)[0];
+    if (bestWait) {
+      setup = bestWait.setup;
+      confidence = bestWait.confidence;
+      entryHint = bestWait.reason;
+      structureText = bestWait.reason;
     }
-    // Still run PA for levels display
-    const pa = runPriceAction(candles, {
-      leftBars: settings?.leftBars ?? 5,
-      rightBars: settings?.rightBars ?? 5,
-    });
-    support = pa.support;
-    resistance = pa.resistance;
-    trend = pa.trend;
-    lastLabel = pa.lastLabel;
-    labels = pa.labels.slice(-12);
-    if (!structureText) structureText = pa.structureText;
   }
 
   if (confidence < minConf) {
@@ -351,7 +463,9 @@ export function analyzeNifty(
   const reason = [
     structureText,
     entryHint,
-    `Strategy: ${strategyId} · style ${analysisStyle} · min conf ${minConf}%.`,
+    `Strategies: ${strategyIds.map(strategyLabel).join(', ')} · winners ${
+      winningIds.length ? winningIds.map(strategyLabel).join(', ') : '—'
+    } · style ${analysisStyle} · min conf ${minConf}%.`,
   ]
     .filter(Boolean)
     .join(' ');
@@ -371,12 +485,12 @@ export function analyzeNifty(
     niftySpot: spot,
     method: 'price_action_hhll',
     setup,
-    lastLabel,
-    trend,
-    support,
-    resistance,
+    lastLabel: paLevels.lastLabel,
+    trend: paLevels.trend,
+    support: paLevels.support,
+    resistance: paLevels.resistance,
     structureText,
-    labels,
+    labels: paLevels.labels.slice(-12),
   };
 }
 
@@ -415,6 +529,13 @@ export function canOpenTrade(settings: NejoicSettings, trades: NejoicTrade[]): {
   if (settings.mode === 'live') {
     return { ok: false, reason: 'Live broker orders not connected yet. Stay in Paper mode.' };
   }
+  // Nifty paper only in India cash hours (Mon–Fri 09:15–15:30 IST)
+  if (settings.tradeOnlyMarketHours !== false && !isIndiaCashSession()) {
+    return {
+      ok: false,
+      reason: 'India cash closed (09:15–15:30 IST Mon–Fri). After hours = Gold only (15m). Weekend = BTC only.',
+    };
+  }
   if (!settings.ignoreDailyLimits) {
     if (pnl >= settings.dailyProfitTarget) {
       return { ok: false, reason: `Daily target ₹${settings.dailyProfitTarget} hit — Nejoic stops for today.` };
@@ -431,30 +552,50 @@ export function canOpenTrade(settings: NejoicSettings, trades: NejoicTrade[]): {
 
 export function openPaperTrade(
   signal: NejoicSignal,
-  settings: NejoicSettings
+  settings: NejoicSettings,
+  opts?: {
+    premium?: number;
+    instrumentKey?: string | null;
+    premiumSource?: 'upstox' | 'estimate';
+    expiry?: string | null;
+  }
 ): NejoicTrade | null {
-  if (signal.bias === 'FLAT' || signal.premium <= 0) return null;
+  const premium = opts?.premium ?? signal.premium;
+  if (signal.bias === 'FLAT' || premium <= 0) return null;
   const lots = Math.min(settings.maxLotsPerTrade, 1);
+  const strike = signal.strike;
   return {
     id: crypto.randomUUID?.() ?? `nt-${Date.now()}`,
     at: new Date().toISOString(),
     side: 'BUY',
     option: signal.bias,
-    strike: signal.strike,
+    strike,
     lots,
-    entryPremium: signal.premium,
+    entryPremium: premium,
     exitPremium: null,
     exitAt: null,
     pnl: null,
     status: 'open',
     note: signal.reason,
+    instrumentKey: opts?.instrumentKey ?? null,
+    premiumSource: opts?.premiumSource ?? 'estimate',
+    expiry: opts?.expiry ?? null,
   };
 }
 
-export function closePaperTrade(trade: NejoicTrade, settings: NejoicSettings): NejoicTrade {
-  // Simulate premium move
-  const move = (Math.random() - 0.42) * 35;
-  const exitPremium = Math.max(5, Math.round((trade.entryPremium + move) * 100) / 100);
+export function closePaperTrade(
+  trade: NejoicTrade,
+  settings: NejoicSettings,
+  liveExitPremium?: number | null
+): NejoicTrade {
+  let exitPremium: number;
+  if (liveExitPremium != null && liveExitPremium > 0) {
+    exitPremium = Math.round(liveExitPremium * 100) / 100;
+  } else {
+    // Fallback only when Upstox LTP unavailable
+    const move = (Math.random() - 0.42) * 35;
+    exitPremium = Math.max(5, Math.round((trade.entryPremium + move) * 100) / 100);
+  }
   const points = exitPremium - trade.entryPremium;
   const pnl = Math.round(points * settings.lotSize * trade.lots);
   return {

@@ -1,9 +1,12 @@
 /**
- * Liquid NSE names used for live scanner passes.
+ * Liquid NSE names used for live scanner passes + symbol autocomplete.
+ * Indices first — traders need them every day.
  * Full NSE/BSE list is available via /api/market/instruments;
  * quotes are batched (Upstox limit 500/request) so we scan this universe first.
  */
-export const LIQUID_SCAN_UNIVERSE: string[] = [
+import { INDIA_INDEX_SYMBOLS } from '@/lib/india-indices';
+
+const LIQUID_EQUITIES: string[] = [
   'RELIANCE',
   'TCS',
   'INFY',
@@ -120,4 +123,9 @@ export const LIQUID_SCAN_UNIVERSE: string[] = [
   'IGL',
   'MGL',
   'CONCOR',
+];
+
+export const LIQUID_SCAN_UNIVERSE: string[] = [
+  ...INDIA_INDEX_SYMBOLS,
+  ...LIQUID_EQUITIES,
 ];

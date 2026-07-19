@@ -62,8 +62,22 @@ export function useTrades() {
               ...t,
               ...input,
               symbol: input.symbol.trim().toUpperCase(),
+              // Force fresh analysis on edit
+              live: null,
             }
           : t
+      );
+      persist(next);
+    },
+    [persist]
+  );
+
+  const patchTradeLive = useCallback(
+    (updates: { id: string; live: Trade['live'] }[]) => {
+      if (!updates.length) return;
+      const map = new Map(updates.map((u) => [u.id, u.live]));
+      const next = readTrades().map((t) =>
+        map.has(t.id) ? { ...t, live: map.get(t.id) ?? null } : t
       );
       persist(next);
     },
@@ -77,5 +91,5 @@ export function useTrades() {
     [persist]
   );
 
-  return { trades, ready, addTrade, updateTrade, deleteTrade };
+  return { trades, ready, addTrade, updateTrade, deleteTrade, patchTradeLive };
 }

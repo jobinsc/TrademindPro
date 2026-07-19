@@ -29,22 +29,6 @@ export default function AdminConsole() {
     if (!ready) return;
     if (!isAdmin) return;
     reload();
-    // Remove leftover test accounts (keep Jobin + Jeril)
-    void (async () => {
-      try {
-        const res = await fetch('/api/admin/purge-users', {
-          method: 'POST',
-          credentials: 'include',
-        });
-        const data = (await res.json()) as { ok?: boolean; removed?: string[] };
-        if (res.ok && data.ok && (data.removed?.length || 0) > 0) {
-          flash(`Removed ${data.removed!.length} test account(s)`);
-          reload();
-        }
-      } catch {
-        /* ignore */
-      }
-    })();
   }, [ready, isAdmin, reload]);
 
   if (!ready) {
@@ -266,12 +250,18 @@ export default function AdminConsole() {
       </div>
 
       <p className="mt-4 text-[12px] text-sky-ink/45">
-        Only real accounts should appear here. Jobin is admin; Jeril is a user.{' '}
+        All signed-up accounts appear here. Optional:{' '}
         <button
           type="button"
           className="font-semibold text-sky-deep hover:underline"
           onClick={async () => {
-            if (!window.confirm('Remove all test accounts? Keep only Jobin + Jeril.')) return;
+            if (
+              !window.confirm(
+                'Delete every account except Jobin + Jeril? This cannot be undone.'
+              )
+            ) {
+              return;
+            }
             const res = await fetch('/api/admin/purge-users', {
               method: 'POST',
               credentials: 'include',
@@ -285,11 +275,11 @@ export default function AdminConsole() {
               alert(data.error || 'Cleanup failed');
               return;
             }
-            flash(`Removed ${(data.removed || []).length} test account(s)`);
+            flash(`Removed ${(data.removed || []).length} account(s)`);
             reload();
           }}
         >
-          Clean test accounts now
+          Clean test accounts
         </button>
         {' · '}
         <Link href="/app" className="font-semibold text-sky-deep hover:underline">

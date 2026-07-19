@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { fetchYahooQuote } from '@/lib/yahoo-nifty';
+import { isCloudBackendConfigured } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,6 +14,17 @@ export type HealthIssue = {
 /** Server health probe — no vendor/source names in messages */
 export async function GET() {
   const issues: HealthIssue[] = [];
+  const cloudAuth =
+    process.env.NEXT_PUBLIC_AUTH_MODE?.trim().toLowerCase() === 'cloud' &&
+    isCloudBackendConfigured();
+
+  if (!cloudAuth) {
+    issues.push({
+      id: 'auth',
+      severity: 'warn',
+      message: 'Shared cloud accounts are not enabled — each browser keeps its own users.',
+    });
+  }
 
   try {
     const nifty = await fetchYahooQuote('^NSEI', 'Nifty');
@@ -59,6 +71,7 @@ export async function GET() {
       : hasWarn
         ? 'Up and running (minor notices)'
         : 'Up and running',
+    cloudAuth,
     issues,
     checkedAt: new Date().toISOString(),
   });

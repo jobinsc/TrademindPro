@@ -8,6 +8,7 @@ import { useAuth } from '@/components/auth/AuthProvider';
 import InfoBubble from '@/components/ui/InfoBubble';
 import {
   deleteUserAccount,
+  isCloudAuth,
   listUsersForAdmin,
   setUserBlocked,
   setUserRole,
@@ -20,6 +21,7 @@ export default function AdminConsole() {
   const router = useRouter();
   const [users, setUsers] = useState<AuthUser[]>([]);
   const [message, setMessage] = useState('');
+  const cloud = isCloudAuth();
 
   const reload = useCallback(() => {
     void listUsersForAdmin().then(setUsers);
@@ -121,6 +123,13 @@ export default function AdminConsole() {
       {message && (
         <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800">
           {message}
+        </div>
+      )}
+
+      {!cloud && (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Accounts are stored only in this browser right now. Users who sign up on another
+          phone or computer will not appear here until cloud login is enabled on the server.
         </div>
       )}
 

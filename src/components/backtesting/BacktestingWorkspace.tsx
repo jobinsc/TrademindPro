@@ -141,7 +141,23 @@ export default function BacktestingWorkspace() {
               onChange={(e) => setTimeframe(e.target.value)}
               className={inputClass}
             >
-              {['5m', '15m', '1H', '1D'].map((t) => (
+              {[
+                '1m',
+                '2m',
+                '3m',
+                '5m',
+                '10m',
+                '15m',
+                '30m',
+                '45m',
+                '1H',
+                '2H',
+                '3H',
+                '4H',
+                '1D',
+                '1W',
+                '1M',
+              ].map((t) => (
                 <option key={t} value={t}>
                   {t}
                 </option>

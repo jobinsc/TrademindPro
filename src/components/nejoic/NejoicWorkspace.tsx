@@ -215,10 +215,9 @@ export default function NejoicWorkspace() {
                     border: '1px solid #cfe0ee',
                     fontSize: 12,
                   }}
-                  formatter={(value: number, name: string) => [
-                    typeof value === 'number' ? value.toFixed(2) : value,
-                    name,
-                  ]}
+                  formatter={(value) =>
+                    typeof value === 'number' ? value.toFixed(2) : String(value ?? '')
+                  }
                   labelFormatter={(label, payload) => {
                     const row = payload?.[0]?.payload as { label?: string } | undefined;
                     return row?.label ? `${label} · ${row.label}` : String(label);

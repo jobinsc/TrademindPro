@@ -45,3 +45,5 @@ scripts/.pa-live-last.json
 # misc
 coverage/
 .turbo/
+
+.vercel

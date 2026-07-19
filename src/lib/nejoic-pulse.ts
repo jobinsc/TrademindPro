@@ -208,14 +208,14 @@ function buildTf(
     rightBars: settings?.rightBars ?? 5,
     setupStyle: settings?.setupStyle ?? 'strict_hl_lh',
     minConfidence: settings?.minConfidence ?? 70,
-    strategyId: settings?.strategyId,
-    analysisStyle: settings?.analysisStyle,
-    emaFast: settings?.emaFast,
-    emaSlow: settings?.emaSlow,
-    rsiPeriod: settings?.rsiPeriod,
-    rsiOversold: settings?.rsiOversold,
-    rsiOverbought: settings?.rsiOverbought,
-    breakoutLookback: settings?.breakoutLookback,
+    strategyId: settings?.strategyId ?? 'price_action_hhll',
+    analysisStyle: settings?.analysisStyle ?? 'strict',
+    emaFast: settings?.emaFast ?? 9,
+    emaSlow: settings?.emaSlow ?? 21,
+    rsiPeriod: settings?.rsiPeriod ?? 14,
+    rsiOversold: settings?.rsiOversold ?? 30,
+    rsiOverbought: settings?.rsiOverbought ?? 70,
+    breakoutLookback: settings?.breakoutLookback ?? 20,
   });
   const labels = sig.labels.map((l) => ({ label: l.label, price: l.price }));
   const slice = candles.slice(-48);

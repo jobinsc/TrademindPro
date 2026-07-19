@@ -30,6 +30,7 @@ import {
   PanelLeftClose,
   PanelLeft,
   Calculator,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/components/auth/AuthProvider';
@@ -142,6 +143,7 @@ function NavLink({
   active,
   nested,
   collapsed,
+  onNavigate,
 }: {
   href: string;
   label: string;
@@ -149,11 +151,13 @@ function NavLink({
   active: boolean;
   nested?: boolean;
   collapsed?: boolean;
+  onNavigate?: () => void;
 }) {
   return (
     <Link
       href={href}
       title={label}
+      onClick={() => onNavigate?.()}
       className={cn(
         'relative flex items-center gap-2.5 rounded-xl py-2 text-[13px] font-medium transition',
         collapsed ? 'justify-center px-2' : nested ? 'px-3 pl-9' : 'px-3',
@@ -171,9 +175,13 @@ function NavLink({
 export default function AppSidebar({
   collapsed = false,
   onToggleCollapse,
+  variant = 'desktop',
+  onNavigate,
 }: {
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  variant?: 'desktop' | 'mobile';
+  onNavigate?: () => void;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -206,6 +214,7 @@ export default function AppSidebar({
 
   function handleLogout() {
     logout();
+    onNavigate?.();
     router.push('/');
   }
 
@@ -228,14 +237,19 @@ export default function AppSidebar({
   return (
     <aside
       className={cn(
-        'flex h-screen shrink-0 flex-col border-r border-[#b9d7ea] transition-[width] duration-200',
+        'flex h-dvh shrink-0 flex-col border-r border-[#b9d7ea] transition-[width] duration-200',
         'bg-[linear-gradient(180deg,#d9eef8_0%,#e8f4fb_45%,#dff0f9_100%)]',
-        collapsed ? 'w-[72px]' : 'w-[250px]'
+        collapsed ? 'w-[72px]' : 'w-[250px]',
+        variant === 'mobile' && 'w-[280px] max-w-[85vw]'
       )}
     >
       <div className="border-b border-[#c5dcec]/80 px-3 py-3">
         <div className={cn('flex items-start gap-2', collapsed ? 'flex-col items-center' : '')}>
-          <Link href="/" className={cn('min-w-0 flex-1', collapsed && 'text-center')}>
+          <Link
+            href="/app"
+            onClick={() => onNavigate?.()}
+            className={cn('min-w-0 flex-1', collapsed && 'text-center')}
+          >
             {collapsed ? (
               <p className="font-display text-[15px] font-bold text-sky-deep">TM</p>
             ) : (
@@ -253,10 +267,18 @@ export default function AppSidebar({
             <button
               type="button"
               onClick={onToggleCollapse}
-              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              aria-label={
+                variant === 'mobile'
+                  ? 'Close menu'
+                  : collapsed
+                    ? 'Expand sidebar'
+                    : 'Collapse sidebar'
+              }
               className="rounded-lg p-1.5 text-sky-deep transition hover:bg-white/70"
             >
-              {collapsed ? (
+              {variant === 'mobile' ? (
+                <X className="h-4 w-4" strokeWidth={2} />
+              ) : collapsed ? (
                 <PanelLeft className="h-4 w-4" strokeWidth={2} />
               ) : (
                 <PanelLeftClose className="h-4 w-4" strokeWidth={2} />
@@ -282,7 +304,7 @@ export default function AppSidebar({
         </div>
       )}
 
-      <nav className="mt-3 flex-1 space-y-4 overflow-y-auto px-2 pb-4">
+      <nav className="mt-3 flex-1 space-y-4 overflow-y-auto overscroll-contain px-2 pb-4">
         {visibleGroups.map((group) => (
           <div key={group.title}>
             {!collapsed && (
@@ -304,6 +326,7 @@ export default function AppSidebar({
                           icon={item.icon}
                           active={isActive(item.href, item.exact)}
                           collapsed={collapsed}
+                          onNavigate={onNavigate}
                         />
                       </div>
                       {hasChildren && !collapsed && (
@@ -334,6 +357,7 @@ export default function AppSidebar({
                             icon={child.icon}
                             nested
                             active={isActive(child.href, child.exact)}
+                            onNavigate={onNavigate}
                           />
                         ))}
                       </div>
@@ -353,6 +377,7 @@ export default function AppSidebar({
           icon={Settings}
           active={isActive('/app/settings')}
           collapsed={collapsed}
+          onNavigate={onNavigate}
         />
         <button
           type="button"

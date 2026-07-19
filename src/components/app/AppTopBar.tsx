@@ -2,14 +2,16 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Calculator, PanelLeftClose, PanelLeft } from 'lucide-react';
+import { Calculator, Menu, PanelLeftClose, PanelLeft } from 'lucide-react';
 
 export default function AppTopBar({
   collapsed,
   onToggleCollapse,
+  onOpenMobile,
 }: {
   collapsed: boolean;
   onToggleCollapse: () => void;
+  onOpenMobile: () => void;
 }) {
   const [now, setNow] = useState(() => new Date());
 
@@ -33,13 +35,24 @@ export default function AppTopBar({
   });
 
   return (
-    <header className="sticky top-0 z-30 flex h-10 shrink-0 items-center justify-between gap-3 border-b border-[#c5dcec] bg-[#e3f1f9]/95 px-3 backdrop-blur-sm md:px-5">
+    <header className="sticky top-0 z-30 flex h-11 shrink-0 items-center justify-between gap-3 border-b border-[#c5dcec] bg-[#e3f1f9]/95 px-3 backdrop-blur-sm md:px-5">
       <div className="flex items-center gap-2">
+        {/* Mobile: open side menu */}
+        <button
+          type="button"
+          onClick={onOpenMobile}
+          aria-label="Open menu"
+          className="inline-flex items-center justify-center rounded-lg p-1.5 text-sky-deep transition hover:bg-white/80 md:hidden"
+        >
+          <Menu className="h-5 w-5" strokeWidth={2} />
+        </button>
+
+        {/* Desktop: collapse / expand sidebar */}
         <button
           type="button"
           onClick={onToggleCollapse}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className="inline-flex items-center justify-center rounded-lg p-1.5 text-sky-deep transition hover:bg-white/80"
+          className="hidden items-center justify-center rounded-lg p-1.5 text-sky-deep transition hover:bg-white/80 md:inline-flex"
         >
           {collapsed ? (
             <PanelLeft className="h-4 w-4" strokeWidth={2} />
@@ -47,6 +60,7 @@ export default function AppTopBar({
             <PanelLeftClose className="h-4 w-4" strokeWidth={2} />
           )}
         </button>
+
         <p className="font-mono text-[10px] font-medium tracking-wide text-sky-ink/55 md:text-[11px]">
           {date} · {time} IST
         </p>

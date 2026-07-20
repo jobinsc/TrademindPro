@@ -236,6 +236,7 @@ export default function PaperTradingWorkspace() {
 
   const nejoicAutoOn = nejoicReady && nejoicSettings.autoTrade;
   const jimboAutoOn = jimboReady && jimboSettings.autoTrade;
+  const anyAutoOn = nejoicAutoOn || jimboAutoOn;
   const bothAutoOn = nejoicAutoOn && jimboAutoOn;
 
   function applyAutoSelection(start: boolean) {

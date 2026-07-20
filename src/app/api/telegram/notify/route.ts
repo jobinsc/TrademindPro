@@ -4,6 +4,9 @@ import { broadcastTelegram, telegramConfigured } from '@/lib/telegram';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+/** In-process dedupe so Strict Mode / double clients don't double-send. */
+const recent = new Map<string, number>();
+
 /**
  * Push a message to Jobin’s Telegram (paper alerts).
  * Optional: set TELEGRAM_NOTIFY_KEY and send header x-notify-key.
@@ -29,6 +32,19 @@ export async function POST(req: NextRequest) {
   }
   const text = String(body.text || '').trim();
   if (!text) return NextResponse.json({ error: 'text required' }, { status: 400 });
+
+  const fp = text.slice(0, 320);
+  const now = Date.now();
+  const last = recent.get(fp) || 0;
+  if (now - last < 12_000) {
+    return NextResponse.json({ ok: true, sent: 0, deduped: true });
+  }
+  recent.set(fp, now);
+  if (recent.size > 80) {
+    for (const [k, t] of recent) {
+      if (now - t > 60_000) recent.delete(k);
+    }
+  }
 
   const result = await broadcastTelegram(text);
   return NextResponse.json(result);

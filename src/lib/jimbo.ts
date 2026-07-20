@@ -11,6 +11,14 @@ import {
   priceActionConfirm,
   type OhlcBar,
 } from '@/lib/cci';
+import type {
+  NejoicAnalysisStyle,
+  NejoicStrategyId,
+  NejoicTimeframeId,
+} from '@/lib/nejoic-options';
+import { styleToSetup } from '@/lib/nejoic';
+
+export { styleToSetup };
 
 export const JIMBO_NAME = 'Jimbo';
 
@@ -26,18 +34,45 @@ export type JimboStatus =
 export type JimboSettings = {
   dailyProfitTarget: number;
   dailyMaxLoss: number;
+  lotSize: number;
+  maxLotsPerTrade: number;
+  leftBars: number;
+  rightBars: number;
+  minConfidence: number;
+  setupStyle: 'strict_hl_lh' | 'balanced';
+  strategyId: NejoicStrategyId;
+  strategyIds: NejoicStrategyId[];
+  analysisStyle: NejoicAnalysisStyle;
+  primaryTimeframe: NejoicTimeframeId;
+  watchTimeframes: NejoicTimeframeId[];
+  emaFast: number;
+  emaSlow: number;
+  rsiPeriod: number;
+  rsiOversold: number;
+  rsiOverbought: number;
+  breakoutLookback: number;
+  orbMinutes: number;
+  respectLunchHour: boolean;
+  tradeOnlyMarketHours: boolean;
+  ignoreDailyLimits: boolean;
+  askMode: 'rules' | 'nejoic_math';
+  brokeragePerLot: number;
+  targetPoints: number;
+  stopLossPoints: number;
+  trailingStopPoints: number;
+  trailingActivatePoints: number;
+  /** Stock scan — CCI zero-cross period */
   cciPeriod: number;
   /** Only trade stocks with liquidityRank <= this (1 = most liquid) */
   maxLiquidityRank: number;
-  minConfidence: number;
   /** Require price-action confirm after CCI cross */
   requirePaConfirm: boolean;
   /** Block new trades when NSE closed (manual + auto) */
   tradeOnlyWhenMarketOpen: boolean;
-  maxLotsPerTrade: number;
   mode: 'paper' | 'live';
   autoTrade: boolean;
   status: JimboStatus;
+  settingsOpen: boolean;
   updatedAt: string | null;
 };
 
@@ -135,15 +170,41 @@ export function defaultJimboSettings(): JimboSettings {
   return {
     dailyProfitTarget: 2500,
     dailyMaxLoss: 1500,
+    lotSize: 1,
+    maxLotsPerTrade: 1,
+    leftBars: 5,
+    rightBars: 5,
+    minConfidence: 75,
+    setupStyle: 'strict_hl_lh',
+    strategyId: 'price_action_hhll',
+    strategyIds: ['price_action_hhll', 'swing_hl'],
+    analysisStyle: 'strict',
+    primaryTimeframe: '5m',
+    watchTimeframes: ['15m', '1D'],
+    emaFast: 9,
+    emaSlow: 21,
+    rsiPeriod: 14,
+    rsiOversold: 30,
+    rsiOverbought: 70,
+    breakoutLookback: 20,
+    orbMinutes: 15,
+    respectLunchHour: true,
+    tradeOnlyMarketHours: true,
+    ignoreDailyLimits: false,
+    askMode: 'nejoic_math',
+    brokeragePerLot: 175,
+    targetPoints: 40,
+    stopLossPoints: 25,
+    trailingStopPoints: 0,
+    trailingActivatePoints: 20,
     cciPeriod: 20,
     maxLiquidityRank: 25,
-    minConfidence: 75,
     requirePaConfirm: true,
     tradeOnlyWhenMarketOpen: true,
-    maxLotsPerTrade: 1,
     mode: 'paper',
     autoTrade: false,
     status: 'idle',
+    settingsOpen: false,
     updatedAt: null,
   };
 }

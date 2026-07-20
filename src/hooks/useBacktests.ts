@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { runDemoBacktest, type BacktestRun } from '@/lib/backtest';
+import type { BacktestRun } from '@/lib/backtest';
 
 const KEY = 'trademindpro_backtests_v1';
 
@@ -35,14 +35,8 @@ export function useBacktests() {
     write(next);
   }, []);
 
-  const run = useCallback(
-    (input: Parameters<typeof runDemoBacktest>[0]) => {
-      const result = runDemoBacktest(input);
-      const item: BacktestRun = {
-        ...result,
-        id: crypto.randomUUID(),
-        ranAt: new Date().toISOString(),
-      };
+  const saveRun = useCallback(
+    (item: BacktestRun) => {
       persist([item, ...read()].slice(0, 30));
       return item;
     },
@@ -56,5 +50,5 @@ export function useBacktests() {
     [persist]
   );
 
-  return { runs, ready, run, remove };
+  return { runs, ready, saveRun, remove };
 }

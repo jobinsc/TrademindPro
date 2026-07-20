@@ -11,6 +11,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import InfoBubble from '@/components/ui/InfoBubble';
+import FullStopBar from '@/components/trading/FullStopBar';
 import { useRiskSettings } from '@/hooks/useRiskSettings';
 import { useBroker } from '@/hooks/useBroker';
 import {
@@ -109,10 +110,14 @@ export default function RiskWorkspace() {
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
           <p className="text-sm text-rose-800">
             FULL STOP is <strong>ON</strong>. New orders / auto trading stay blocked until
-            you release it.
+            you release it with the button above.
           </p>
         </div>
       )}
+
+      <div className="mt-4">
+        <FullStopBar />
+      </div>
 
       {savedMsg && (
         <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800">
@@ -320,7 +325,7 @@ export default function RiskWorkspace() {
       </div>
 
       <p className="mt-5 text-[12px] text-sky-ink/45">
-        These limits will connect to Start / Stop next.{' '}
+        Limits apply to Paper Trading, Nejoic, and Jimbo when live trading is connected.{' '}
         <Link href="/app/terminal" className="font-semibold text-sky-deep hover:underline">
           Broker Terminal
           <ArrowRight className="ml-0.5 inline h-3 w-3" />

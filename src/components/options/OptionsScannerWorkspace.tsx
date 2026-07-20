@@ -1,9 +1,15 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, CandlestickChart } from 'lucide-react';
+import { ArrowRight, CandlestickChart, OctagonX, Play, Square } from 'lucide-react';
 import InfoBubble from '@/components/ui/InfoBubble';
+import {
+  ModuleRunButton,
+  ModuleSettingsButton,
+  ModuleSettingsPanel,
+} from '@/components/ui/ModuleTabShell';
+import { useOptionsScannerSettings } from '@/hooks/useOptionsScannerSettings';
 import {
   UNDERLYINGS,
   avgIv,
@@ -15,17 +21,75 @@ import { formatCurrency, formatNumber, formatPercent } from '@/lib/utils';
 import { SortableTh, useSortable } from '@/components/ui/sortable';
 
 export default function OptionsScannerWorkspace() {
+  const { ready, settings, update } = useOptionsScannerSettings();
   const [underlyingId, setUnderlyingId] = useState(UNDERLYINGS[0].id);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const autoTimer = useRef<number | null>(null);
+  const stopRef = useRef(false);
+
+  useEffect(() => {
+    if (!ready) return;
+    setUnderlyingId(settings.underlyingId);
+  }, [ready, settings.underlyingId]);
+
+  useEffect(() => {
+    if (!ready || !settings.autoRefreshSec) {
+      if (autoTimer.current) window.clearInterval(autoTimer.current);
+      return;
+    }
+    autoTimer.current = window.setInterval(() => {
+      if (!stopRef.current) setRefreshKey((k) => k + 1);
+    }, settings.autoRefreshSec * 1000);
+    return () => {
+      if (autoTimer.current) window.clearInterval(autoTimer.current);
+    };
+  }, [ready, settings.autoRefreshSec]);
+
   const underlying = UNDERLYINGS.find((u) => u.id === underlyingId) || UNDERLYINGS[0];
 
-  const chain = useMemo(() => buildDemoChain(underlying), [underlying]);
-  const pcr = useMemo(() => calcPcr(chain), [chain]);
-  const maxPain = useMemo(() => calcMaxPain(chain), [chain]);
-  const iv = useMemo(() => avgIv(chain), [chain]);
-  const atm = chain[Math.floor(chain.length / 2)]?.strike;
+  const chain = useMemo(() => buildDemoChain(underlying), [underlying, refreshKey]);
+  const filteredChain = useMemo(() => {
+    const half = settings.strikeRange;
+    const mid = Math.floor(chain.length / 2);
+    const sliced = chain.slice(Math.max(0, mid - half), Math.min(chain.length, mid + half + 1));
+    return sliced.filter(
+      (r) =>
+        r.ceOi >= settings.minOi &&
+        r.peOi >= settings.minOi &&
+        r.ceIv >= settings.minIv &&
+        r.peIv >= settings.minIv
+    );
+  }, [chain, settings.minOi, settings.minIv, settings.strikeRange]);
+
+  const pcr = useMemo(() => calcPcr(filteredChain.length ? filteredChain : chain), [filteredChain, chain]);
+  const maxPain = useMemo(() => calcMaxPain(filteredChain.length ? filteredChain : chain), [filteredChain, chain]);
+  const iv = useMemo(() => avgIv(filteredChain.length ? filteredChain : chain), [filteredChain, chain]);
+  const atm = (filteredChain.length ? filteredChain : chain)[Math.floor((filteredChain.length || chain.length) / 2)]?.strike;
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    stopRef.current = false;
+    await new Promise((r) => window.setTimeout(r, 400));
+    setRefreshKey((k) => k + 1);
+    setRefreshing(false);
+  }
+
+  function handleStopRefresh() {
+    stopRef.current = true;
+    setRefreshing(false);
+    update({ autoRefreshSec: 0 });
+  }
+
+  function handleForceStop() {
+    stopRef.current = true;
+    setRefreshing(false);
+    if (autoTimer.current) window.clearInterval(autoTimer.current);
+    update({ autoRefreshSec: 0 });
+  }
 
   const { sorted: displayChain, sort, toggle } = useSortable(
-    chain,
+    filteredChain.length ? filteredChain : chain,
     (row, key) => {
       switch (key) {
         case 'ceLtp':
@@ -53,6 +117,17 @@ export default function OptionsScannerWorkspace() {
     { key: 'strike', dir: 'asc' }
   );
 
+  if (!ready) {
+    return (
+      <div className="mx-auto max-w-[1200px] px-5 py-16 text-center text-sm text-sky-ink/50">
+        Loading options scanner…
+      </div>
+    );
+  }
+
+  const inputClass =
+    'w-full rounded-xl border border-[#cfe0ee] bg-white px-3 py-2.5 text-sm text-sky-ink outline-none focus:ring-2 focus:ring-sky-mid/30';
+
   return (
     <div className="mx-auto w-full max-w-[1200px] px-5 py-7 md:px-8 md:py-9">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -70,18 +145,122 @@ export default function OptionsScannerWorkspace() {
             </InfoBubble>
           </div>
         </div>
-        <div className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold ring-1 ring-[#cfe0ee]">
-          <CandlestickChart className="h-3.5 w-3.5 text-sky-deep" strokeWidth={1.75} />
-          Expiry {underlying.expiry}
+        <div className="flex flex-wrap items-center gap-2">
+          <ModuleSettingsButton
+            open={settings.settingsOpen}
+            onToggle={() => update({ settingsOpen: !settings.settingsOpen })}
+          />
+          <div className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold ring-1 ring-[#cfe0ee]">
+            <CandlestickChart className="h-3.5 w-3.5 text-sky-deep" strokeWidth={1.75} />
+            Expiry {underlying.expiry}
+          </div>
         </div>
       </div>
+
+      <ModuleSettingsPanel
+        open={settings.settingsOpen}
+        title="Options scanner settings"
+        description="Underlying, OI/IV filters, strike range, and auto-refresh — isolated to this tab."
+        controls={
+          <>
+            <ModuleRunButton variant="start" onClick={() => void handleRefresh()} disabled={refreshing}>
+              <Play className="h-4 w-4" />
+              {refreshing ? 'Refreshing…' : 'Refresh chain'}
+            </ModuleRunButton>
+            <ModuleRunButton variant="stop" onClick={handleStopRefresh} disabled={!refreshing && !settings.autoRefreshSec}>
+              <Square className="h-4 w-4" />
+              Stop refresh
+            </ModuleRunButton>
+            <ModuleRunButton variant="force" onClick={handleForceStop}>
+              <OctagonX className="h-4 w-4" />
+              Force stop
+            </ModuleRunButton>
+          </>
+        }
+      >
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="block text-sm">
+            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-sky-ink/45">
+              Default underlying
+            </span>
+            <select
+              value={underlyingId}
+              onChange={(e) => {
+                setUnderlyingId(e.target.value);
+                update({ underlyingId: e.target.value });
+              }}
+              className={inputClass}
+            >
+              {UNDERLYINGS.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.symbol}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-sky-ink/45">
+              Min OI (CE & PE)
+            </span>
+            <input
+              type="number"
+              min={0}
+              value={settings.minOi}
+              onChange={(e) => update({ minOi: Number(e.target.value) || 0 })}
+              className={inputClass}
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-sky-ink/45">
+              Min IV %
+            </span>
+            <input
+              type="number"
+              min={0}
+              step={0.1}
+              value={settings.minIv}
+              onChange={(e) => update({ minIv: Number(e.target.value) || 0 })}
+              className={inputClass}
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-sky-ink/45">
+              Strike range (± rows)
+            </span>
+            <input
+              type="number"
+              min={3}
+              max={30}
+              value={settings.strikeRange}
+              onChange={(e) => update({ strikeRange: Number(e.target.value) || 10 })}
+              className={inputClass}
+            />
+          </label>
+          <label className="block text-sm sm:col-span-2">
+            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-sky-ink/45">
+              Auto-refresh (seconds, 0 = off)
+            </span>
+            <input
+              type="number"
+              min={0}
+              step={5}
+              value={settings.autoRefreshSec}
+              onChange={(e) => update({ autoRefreshSec: Number(e.target.value) || 0 })}
+              className={inputClass}
+            />
+          </label>
+        </div>
+      </ModuleSettingsPanel>
 
       <div className="mt-6 flex flex-wrap gap-2">
         {UNDERLYINGS.map((u) => (
           <button
             key={u.id}
             type="button"
-            onClick={() => setUnderlyingId(u.id)}
+            onClick={() => {
+              setUnderlyingId(u.id);
+              update({ underlyingId: u.id });
+            }}
             className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
               underlyingId === u.id
                 ? 'bg-sky-deep text-white'

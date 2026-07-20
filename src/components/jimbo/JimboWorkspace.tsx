@@ -1,28 +1,31 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
 import {
   Bot,
   Clock,
+  OctagonX,
   Play,
   Radar,
   Send,
   Square,
   Target,
-  Zap,
 } from 'lucide-react';
+import {
+  ModuleRunButton,
+  ModuleSettingsButton,
+  ModuleSettingsPanel,
+} from '@/components/ui/ModuleTabShell';
+import { JimboSettingsPanel } from '@/components/jimbo/JimboSettingsWorkspace';
 import { useJimbo } from '@/hooks/useJimbo';
 import { JIMBO_NAME, JIMBO_UNIVERSE } from '@/lib/jimbo';
-import { hrefWithFrom } from '@/lib/nav-return';
+import { normalizeStrategyIds } from '@/lib/nejoic-options';
 import { formatCurrency } from '@/lib/utils';
 import { SortableTh, useSortable } from '@/components/ui/sortable';
 import FullStopBar from '@/components/trading/FullStopBar';
 import InfoBubble from '@/components/ui/InfoBubble';
 
 export default function JimboWorkspace() {
-  const pathname = usePathname();
   const {
     ready,
     settings,
@@ -41,6 +44,7 @@ export default function JimboWorkspace() {
     closeOpen,
     ask,
     clearChat,
+    updateSettings,
   } = useJimbo();
   const [prompt, setPrompt] = useState('');
 
@@ -48,6 +52,16 @@ export default function JimboWorkspace() {
   const openTrade = trades.find((t) => t.status === 'open');
   const locked =
     settings.status === 'target_hit' || settings.status === 'stopped_loss';
+  const settingsOpen = settings.settingsOpen ?? false;
+
+  function toggleAuto() {
+    setAutoTrade(!settings.autoTrade);
+  }
+
+  function jimboForceStop(exitTrade: boolean) {
+    setAutoTrade(false);
+    if (exitTrade && openTrade) closeOpen();
+  }
 
   const { sorted: displaySignals, sort, toggle } = useSortable(
     signals,
@@ -101,14 +115,12 @@ export default function JimboWorkspace() {
               </p>
             </InfoBubble>
           </div>
-          <Link
-            href={hrefWithFrom('/app/jimbo/settings', pathname || '/app/jimbo')}
-            className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-sky-deep hover:underline"
-          >
-            Jimbo Settings
-          </Link>
         </div>
         <div className="flex flex-col items-end gap-2">
+          <ModuleSettingsButton
+            open={settingsOpen}
+            onToggle={() => updateSettings({ settingsOpen: !settingsOpen })}
+          />
           <span
             className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] font-semibold ${
               marketOpen
@@ -126,6 +138,53 @@ export default function JimboWorkspace() {
       <div className="mt-5">
         <FullStopBar />
       </div>
+
+      <ModuleSettingsPanel
+        open={settingsOpen}
+        title={`${JIMBO_NAME} settings`}
+        description="Full stock brain — strategies, analysis, timeframes, CCI, liquidity, risk, and SL/target. Same scope as Nejoic, tuned for liquid F&O names."
+        controls={
+          <>
+            <ModuleRunButton variant="start" onClick={() => scan()} disabled={scanning}>
+              <Radar className="h-4 w-4" />
+              {scanning ? 'Scanning…' : 'Scan liquid stocks'}
+            </ModuleRunButton>
+            <ModuleRunButton variant="start" onClick={toggleAuto} disabled={settings.autoTrade || locked}>
+              <Play className="h-4 w-4" />
+              Start auto
+            </ModuleRunButton>
+            <ModuleRunButton variant="stop" onClick={toggleAuto} disabled={!settings.autoTrade}>
+              <Square className="h-4 w-4" />
+              Stop auto
+            </ModuleRunButton>
+            <ModuleRunButton variant="force" onClick={() => jimboForceStop(false)}>
+              <OctagonX className="h-4 w-4" />
+              Force stop
+            </ModuleRunButton>
+            <ModuleRunButton variant="force" onClick={() => jimboForceStop(true)}>
+              <OctagonX className="h-4 w-4" />
+              Force stop + exit
+            </ModuleRunButton>
+          </>
+        }
+      >
+        <JimboSettingsPanel embedded />
+      </ModuleSettingsPanel>
+
+      {!settingsOpen && (
+        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-[#cfe0ee] bg-sky-soft/30 px-4 py-3 text-sm text-sky-ink/70">
+          <span>
+            Auto {settings.autoTrade ? 'ON' : 'OFF'} ·{' '}
+            {normalizeStrategyIds(settings.strategyIds, settings.strategyId).length} strategies ·{' '}
+            {settings.primaryTimeframe} · CCI({settings.cciPeriod}) · Top {settings.maxLiquidityRank}{' '}
+            · SL {settings.stopLossPoints} / Tgt {settings.targetPoints}
+          </span>
+          <ModuleRunButton variant="start" onClick={() => scan()} disabled={scanning}>
+            <Radar className="h-4 w-4" />
+            Quick scan
+          </ModuleRunButton>
+        </div>
+      )}
 
       <div className="mt-5 grid gap-3 sm:grid-cols-3">
         <div className="rounded-2xl border border-[#cfe0ee]/90 bg-white px-4 py-4">
@@ -170,15 +229,6 @@ export default function JimboWorkspace() {
       <div className="mt-5 flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => scan()}
-          disabled={scanning}
-          className="inline-flex items-center gap-2 rounded-xl bg-sky-deep px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-ink disabled:opacity-50"
-        >
-          <Radar className="h-4 w-4" />
-          {scanning ? 'Scanning…' : 'Scan liquid stocks'}
-        </button>
-        <button
-          type="button"
           disabled={locked || !actionable.length || Boolean(openTrade)}
           onClick={() => takeSignal()}
           className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-40"
@@ -194,26 +244,6 @@ export default function JimboWorkspace() {
         >
           <Square className="h-4 w-4" />
           Exit trade
-        </button>
-        <button
-          type="button"
-          disabled={locked}
-          onClick={() => setAutoTrade(!settings.autoTrade)}
-          className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40 ${
-            settings.autoTrade ? 'bg-rose-500 hover:bg-rose-600' : 'bg-sky-deep hover:bg-sky-ink'
-          }`}
-        >
-          {settings.autoTrade ? (
-            <>
-              <Square className="h-4 w-4" />
-              Stop
-            </>
-          ) : (
-            <>
-              <Zap className="h-4 w-4" />
-              Start
-            </>
-          )}
         </button>
       </div>
 

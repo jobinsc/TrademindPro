@@ -78,15 +78,10 @@ export function normalizeTradeStyle(raw: unknown): TradeStyle {
   return 'swing';
 }
 
-export const STRATEGIES = [
-  'Breakout',
-  'EMA Crossover',
-  'RSI Reversal',
-  'Options Premium',
-  'Price Action',
-  'Support / Resistance',
-  'Other',
-];
+import { journalStrategyNames } from '@/lib/strategy-catalog';
+
+/** Journal strategy tags — synced with full catalog (PA, candlestick, SMC, etc.) */
+export const STRATEGIES = journalStrategyNames();
 
 /** Local calendar date YYYY-MM-DD (not UTC, so India evening is correct) */
 export function todayISO(): string {

@@ -46,16 +46,16 @@ export const SCAN_TEMPLATES: ScanTemplate[] = [
   },
   {
     id: 'ema-crossover',
-    name: 'EMA Crossover',
+    name: 'EMA 9/21 Cross',
     category: 'indicators',
-    description: 'Fast / slow EMA trend cross proxy',
+    description: 'Fast / slow EMA cross — default 9/21, change periods below',
     indicators: ['EMA'],
   },
   {
     id: 'sma-crossover',
-    name: 'SMA / Golden Cross',
+    name: 'SMA Golden Cross (50/200)',
     category: 'indicators',
-    description: 'Price vs SMA trend (50/200 style)',
+    description: 'Long-term SMA cross — edit 50/200 (or any) below',
     indicators: ['SMA'],
   },
   {
@@ -393,6 +393,142 @@ export const SCAN_TEMPLATES: ScanTemplate[] = [
     indicators: ['Price'],
   },
 ];
+
+/** Professional grouped list — same style as strategy picker (PA, MA, SMC, etc.) */
+export const SCAN_LIST_GROUPS: {
+  id: string;
+  title: string;
+  hint: string;
+  templateIds: string[];
+}[] = [
+  {
+    id: 'price_action',
+    title: 'Price action',
+    hint: 'Structure, breakouts, swings — HH/HL style moves.',
+    templateIds: [
+      'momentum-breakout',
+      '52w-near',
+      'top-gainers',
+      'top-losers',
+      'swing-breakout-retest',
+      'swing-flag',
+      'engulfing-proxy',
+    ],
+  },
+  {
+    id: 'candlestick_patterns',
+    title: 'Candlestick patterns',
+    hint: 'Classic candle reversal & strong-close setups.',
+    templateIds: ['engulfing-proxy', 'nr7', 'gap-up-down'],
+  },
+  {
+    id: 'smc',
+    title: 'SMC techniques',
+    hint: 'Smart Money Concepts — liquidity, ORB, VWAP zones (quote proxy).',
+    templateIds: ['orb', 'vwap-reclaim', 'pivot-bounce', 'day-trade'],
+  },
+  {
+    id: 'moving_averages',
+    title: 'Moving averages',
+    hint: 'Default 9/21 — change Fast / Slow MA period anytime below.',
+    templateIds: [
+      'ema-crossover',
+      'sma-crossover',
+      'swing-ema-ribbon',
+      'pullback-trend',
+      'swing-setups',
+      'swing-rsi-trend',
+      'pos-golden-cross',
+      'pos-200sma-trend',
+      'pos-stage2',
+      'pos-breakout-weekly',
+    ],
+  },
+  {
+    id: 'momentum',
+    title: 'Momentum & oscillators',
+    hint: 'RSI, MACD, Stochastic, CCI, Williams %R…',
+    templateIds: [
+      'rsi-reversal',
+      'macd-cross',
+      'stochastic',
+      'cci-zero',
+      'cci-oversold',
+      'cci-overbought',
+      'cci-trend',
+      'williams-r',
+      'mfi-flow',
+      'roc-momentum',
+      'awesome-osc',
+      'swing-macd-turn',
+      'swing-cci-reversal',
+      'pos-mean-reversion',
+      'pos-cci-cycle',
+    ],
+  },
+  {
+    id: 'volatility',
+    title: 'Volatility & channels',
+    hint: 'Bollinger, ATR, Supertrend, Ichimoku.',
+    templateIds: [
+      'bollinger-break',
+      'bollinger-squeeze',
+      'supertrend',
+      'atr-expansion',
+      'ichimoku-break',
+      'parabolic-sar',
+      'adx-trend',
+      'pos-low-volatility',
+      'swing-flag',
+    ],
+  },
+  {
+    id: 'volume',
+    title: 'Volume',
+    hint: 'High volume, relative volume spikes.',
+    templateIds: ['high-volume', 'rvol-spike', 'pos-accumulation'],
+  },
+  {
+    id: 'swing',
+    title: 'Swing setups',
+    hint: 'Multi-day holds — tune MA/RSI in indicator settings.',
+    templateIds: ['swing-relative-strength'],
+  },
+  {
+    id: 'fundamental',
+    title: 'Fundamental',
+    hint: 'Value / quality proxy screens.',
+    templateIds: ['undervalued'],
+  },
+];
+
+const SCAN_TEMPLATE_MAP = new Map(SCAN_TEMPLATES.map((t) => [t.id, t]));
+
+export function scanTemplatesGroupedForList(templates: ScanTemplate[]) {
+  const allowed = new Set(templates.map((t) => t.id));
+  const placed = new Set<string>();
+
+  const groups = SCAN_LIST_GROUPS.map((g) => {
+    const items = g.templateIds
+      .map((id) => SCAN_TEMPLATE_MAP.get(id))
+      .filter((t): t is ScanTemplate => !!t && allowed.has(t.id));
+    items.forEach((t) => placed.add(t.id));
+    return { ...g, items };
+  }).filter((g) => g.items.length > 0);
+
+  const rest = templates.filter((t) => !placed.has(t.id));
+  if (rest.length) {
+    groups.push({
+      id: 'other',
+      title: 'Other',
+      hint: 'Additional scan templates.',
+      templateIds: rest.map((t) => t.id),
+      items: rest,
+    });
+  }
+
+  return groups;
+}
 
 const DEMO_UNIVERSE: Omit<ScanResult, 'signal' | 'strength'>[] = [
   { symbol: 'RELIANCE', exchange: 'NSE', name: 'Reliance Industries', price: 2984.5, changePct: 0.42 },

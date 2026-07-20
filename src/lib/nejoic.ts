@@ -6,7 +6,9 @@ import type {
 } from '@/lib/nejoic-options';
 import { normalizeStrategyIds, strategyLabel } from '@/lib/nejoic-options';
 import { runNejoicStrategy } from '@/lib/nejoic-strategy';
+import { runCatalogSignal } from '@/lib/backtest-signals';
 import { isIndiaCashSession } from '@/lib/market-desk';
+import { netAfterBrokerage, paperBrokerage, getBrokeragePerLot } from '@/lib/brokerage';
 
 export const NEJOIC_NAME = 'Nejoic';
 
@@ -68,9 +70,21 @@ export type NejoicSettings = {
   telegramHeartbeatMinutes: number;
   /** Append study parameters block to every Telegram message */
   telegramIncludeStudies: boolean;
+  /** Round-trip brokerage ₹ per lot (paper P&L) */
+  brokeragePerLot: number;
+  /** Paper exit — target distance in premium points */
+  targetPoints: number;
+  /** Paper exit — stop-loss in premium points */
+  stopLossPoints: number;
+  /** Trailing stop points (0 = off) */
+  trailingStopPoints: number;
+  /** Activate trailing after this many points profit */
+  trailingActivatePoints: number;
   mode: NejoicMode;
   autoTrade: boolean;
   status: NejoicStatus;
+  /** Settings panel open on Nejoic tab */
+  settingsOpen: boolean;
   updatedAt: string | null;
 };
 
@@ -114,6 +128,10 @@ export type NejoicTrade = {
   exitPremium: number | null;
   exitAt: string | null;
   pnl: number | null;
+  /** Round-trip brokerage deducted (₹175 × lots) */
+  brokerage?: number | null;
+  /** Gross P&L before brokerage */
+  grossPnl?: number | null;
   status: 'open' | 'closed';
   note: string;
   /** Upstox instrument key when entry used live LTP */
@@ -176,9 +194,15 @@ export function defaultNejoicSettings(): NejoicSettings {
     telegramTimeframe: '15m',
     telegramHeartbeatMinutes: 15,
     telegramIncludeStudies: true,
+    brokeragePerLot: 175,
+    targetPoints: 40,
+    stopLossPoints: 25,
+    trailingStopPoints: 0,
+    trailingActivatePoints: 20,
     mode: 'paper',
     autoTrade: false,
     status: 'idle',
+    settingsOpen: false,
     updatedAt: null,
   };
 }
@@ -336,13 +360,19 @@ export function analyzeNifty(
       let reason = pa.entryHint;
 
       if (setupStyle === 'strict_hl_lh' || analysisStyle === 'strict') {
-        const allowed = setup === 'HL_IN_UPTREND' || setup === 'LH_IN_DOWNTREND';
+        const allowed =
+          setup === 'HL_IN_UPTREND' ||
+          setup === 'LH_IN_DOWNTREND' ||
+          setup === 'HL_PRINT' ||
+          setup === 'LH_PRINT' ||
+          setup === 'LH_BREAK' ||
+          setup === 'HL_BREAK';
         if (!allowed) {
           bias = 'FLAT';
           setup = setup.startsWith('WAIT') ? setup : 'WAIT_STRICT';
           confidence = Math.min(confidence, 55);
           reason =
-            'Strict mode: only Higher Low → CE or Lower High → PE. Waiting for that print.';
+            'Strict PA: only Higher Low → CE or Lower High → PE (or HL/LH break). Waiting.';
         }
       }
 
@@ -368,15 +398,16 @@ export function analyzeNifty(
         reason: `${pa.structureText} ${reason}`.trim(),
       });
     } else {
-      const alt = runNejoicStrategy(strategyId, candles, {
-        emaFast: settings?.emaFast ?? 9,
-        emaSlow: settings?.emaSlow ?? 21,
-        rsiPeriod: settings?.rsiPeriod ?? 14,
-        rsiOversold: settings?.rsiOversold ?? 30,
-        rsiOverbought: settings?.rsiOverbought ?? 70,
-        breakoutLookback: settings?.breakoutLookback ?? 20,
-        orbMinutes: settings?.orbMinutes ?? 15,
-      });
+      const alt =
+        runNejoicStrategy(strategyId, candles, {
+          emaFast: settings?.emaFast ?? 9,
+          emaSlow: settings?.emaSlow ?? 21,
+          rsiPeriod: settings?.rsiPeriod ?? 14,
+          rsiOversold: settings?.rsiOversold ?? 30,
+          rsiOverbought: settings?.rsiOverbought ?? 70,
+          breakoutLookback: settings?.breakoutLookback ?? 20,
+          orbMinutes: settings?.orbMinutes ?? 15,
+        }) || runCatalogSignal(strategyId, candles);
       if (alt) {
         votes.push({
           id: strategyId,
@@ -558,11 +589,18 @@ export function openPaperTrade(
     instrumentKey?: string | null;
     premiumSource?: 'upstox' | 'estimate';
     expiry?: string | null;
+    lots?: number;
   }
 ): NejoicTrade | null {
   const premium = opts?.premium ?? signal.premium;
   if (signal.bias === 'FLAT' || premium <= 0) return null;
-  const lots = Math.min(settings.maxLotsPerTrade, 1);
+  const lots = Math.max(
+    1,
+    Math.min(
+      settings.maxLotsPerTrade,
+      Math.floor(opts?.lots != null ? opts.lots : settings.maxLotsPerTrade) || 1
+    )
+  );
   const strike = signal.strike;
   return {
     id: crypto.randomUUID?.() ?? `nt-${Date.now()}`,
@@ -597,13 +635,22 @@ export function closePaperTrade(
     exitPremium = Math.max(5, Math.round((trade.entryPremium + move) * 100) / 100);
   }
   const points = exitPremium - trade.entryPremium;
-  const pnl = Math.round(points * settings.lotSize * trade.lots);
+  const grossPnl = Math.round(points * settings.lotSize * trade.lots);
+  const perLot =
+    settings.brokeragePerLot != null && settings.brokeragePerLot >= 0
+      ? settings.brokeragePerLot
+      : getBrokeragePerLot();
+  const brokerage = paperBrokerage(trade.lots, perLot);
+  const pnl = netAfterBrokerage(grossPnl, trade.lots, perLot);
   return {
     ...trade,
     exitPremium,
     exitAt: new Date().toISOString(),
+    grossPnl,
+    brokerage,
     pnl,
     status: 'closed',
+    note: `${trade.note} · Brok ₹${brokerage}`.trim(),
   };
 }
 

@@ -2,21 +2,19 @@
 
 import { useState } from 'react';
 import { OctagonX } from 'lucide-react';
-import { useAutomation } from '@/hooks/useAutomation';
 import { useNejoic } from '@/hooks/useNejoic';
 import { useJimbo } from '@/hooks/useJimbo';
 import { useRiskSettings } from '@/hooks/useRiskSettings';
 import { useStrategies } from '@/hooks/useStrategies';
 
 /**
- * Big red stop — turns off auto trading everywhere.
+ * Global emergency stop — turns off auto trading on every agent/module.
  */
 export default function FullStopBar({
   showExitTrades = true,
 }: {
   showExitTrades?: boolean;
 }) {
-  const { setStatus, pushEvent } = useAutomation();
   const { fullStop: nejoicFullStop } = useNejoic();
   const { setAutoTrade: setJimboAuto, closeOpen: closeJimbo } = useJimbo();
   const { update: updateRisk } = useRiskSettings();
@@ -24,21 +22,16 @@ export default function FullStopBar({
   const [done, setDone] = useState<string | null>(null);
 
   function fullStop(alsoExitTrades: boolean) {
-    // Force Nejoic off + sync across UI
     nejoicFullStop(alsoExitTrades);
     setJimboAuto(false);
     if (alsoExitTrades) closeJimbo();
 
-    setStatus('paused', 'FULL STOP — everything stopped');
     updateRisk({ emergencyStop: true });
 
     for (const s of strategies) {
       if (s.status === 'ready' || s.status === 'live') {
         updateStrategy(s.id, { ...s, status: 'paused' });
       }
-    }
-    if (alsoExitTrades) {
-      pushEvent('FULL STOP — open paper trades closed');
     }
     setDone(alsoExitTrades ? 'Stopped + trades closed' : 'Everything stopped');
     setTimeout(() => setDone(null), 2500);

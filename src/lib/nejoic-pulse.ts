@@ -477,23 +477,58 @@ function analyzeDecision(
   };
 }
 
-export function formatPulseText(p: LivePulse, settings?: Partial<NejoicSettings>): string {
+export function formatPulseText(
+  p: LivePulse,
+  settings?: Partial<NejoicSettings> & { messageStyle?: 'full' | 'compact' | 'signal_only' }
+): string {
   const f = p.focus;
   const d = p.daily;
   const w = p.weekly;
   const plan = p.plan;
   const pts = p.changePts >= 0 ? `+${p.changePts.toFixed(2)}` : `${p.changePts.toFixed(2)}`;
   const desk = p.desk || 'INDIA';
+  const style = settings?.messageStyle || 'full';
+
+  const actionLabel =
+    plan.action === 'BUY_CE'
+      ? desk === 'GOLD' || desk === 'BTC'
+        ? 'LONG bias (paper)'
+        : 'BUY CE (paper)'
+      : plan.action === 'BUY_PE'
+        ? desk === 'GOLD' || desk === 'BTC'
+          ? 'SHORT bias (paper)'
+          : 'BUY PE (paper)'
+        : 'WAIT — no force';
+
+  if (style === 'signal_only') {
+    return [
+      `NEJOIC · ${p.asset} (${f.tf})`,
+      `${istClock()} IST · ${p.spot.toFixed(2)} (${pts})`,
+      `Action: ${actionLabel}`,
+      `Conviction: ${plan.conviction} · ${p.scorePct}%`,
+      plan.why,
+    ].join('\n');
+  }
+
+  if (style === 'compact') {
+    let compact = [
+      `NEJOIC · ${p.asset} (${f.tf})`,
+      `${istClock()} IST · ${p.spot.toFixed(2)} (${pts})`,
+      `Action: ${actionLabel} · ${plan.conviction} · ${p.scorePct}%`,
+      `Trend: ${f.trend} · ${f.pattern}`,
+      `S/R: ${f.support != null ? f.support.toFixed(2) : '—'} / ${f.resistance != null ? f.resistance.toFixed(2) : '—'}`,
+      `Entry: ${plan.entryTrigger}`,
+      `Invalidation: ${plan.invalidation}`,
+    ].join('\n');
+    if (settings?.telegramIncludeStudies !== false) {
+      compact += `\n\n${formatStudyBlock(p, settings)}`;
+    }
+    return compact;
+  }
 
   let body = '';
 
   if (desk === 'GOLD' || desk === 'BTC') {
-    const action =
-      plan.action === 'BUY_CE'
-        ? 'LONG bias (paper)'
-        : plan.action === 'BUY_PE'
-          ? 'SHORT bias (paper)'
-          : 'WAIT — no force';
     const title =
       desk === 'GOLD'
         ? `NEJOIC · GOLD (${f.tf})`
@@ -505,7 +540,7 @@ export function formatPulseText(p: LivePulse, settings?: Partial<NejoicSettings>
       `${p.asset} @ ${p.spot.toFixed(2)} (${pts}) · Focus ${f.tf}`,
       ``,
       `1) VERDICT`,
-      `Action: ${action}`,
+      `Action: ${actionLabel}`,
       `Conviction: ${plan.conviction} · Score ${p.scorePct}%`,
       `Why: ${plan.why}`,
       `${p.decisionReason}`,
@@ -525,20 +560,13 @@ export function formatPulseText(p: LivePulse, settings?: Partial<NejoicSettings>
       `• Timing: ${plan.whenToAct}`,
     ].join('\n');
   } else {
-    const action =
-      plan.action === 'BUY_CE'
-        ? 'BUY CE (paper)'
-        : plan.action === 'BUY_PE'
-          ? 'BUY PE (paper)'
-          : 'WAIT — no force';
-
     body = [
       `NEJOIC INDIA DESK · NIFTY (${f.tf})`,
       `${istClock()} IST · Spot ₹${p.spot.toFixed(2)} (${pts}) · Focus ${f.tf}`,
       `Session: ${deskLabel('INDIA')}`,
       ``,
       `1) VERDICT`,
-      `Action: ${action}`,
+      `Action: ${actionLabel}`,
       `Conviction: ${plan.conviction} · Score ${p.scorePct}% (${p.fired}/${p.total})`,
       `Why: ${plan.why}`,
       `${p.decisionReason}`,
@@ -608,7 +636,7 @@ function formatStudyBlock(p: LivePulse, settings?: Partial<NejoicSettings>): str
   if (ids.includes('orb')) {
     lines.push(`• ORB minutes: ${s.orbMinutes ?? 15}`);
   }
-  lines.push(`• Delivery: Alerts → Telegram · Maths: Nejoic Settings.`);
+  lines.push(`• Delivery: AI Agents → Telegram Bot (isolated settings).`);
   return lines.join('\n');
 }
 

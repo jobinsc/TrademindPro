@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowRight,
@@ -8,7 +8,6 @@ import {
   Pause,
   Play,
   Plus,
-  Save,
   Search,
   Send,
   Trash2,
@@ -18,7 +17,6 @@ import {
 import InfoBubble from '@/components/ui/InfoBubble';
 import { useAlerts } from '@/hooks/useAlerts';
 import { useWatchlists } from '@/hooks/useWatchlists';
-import { useNejoic } from '@/hooks/useNejoic';
 import {
   emptyAlertInput,
   summarizeAlerts,
@@ -27,8 +25,6 @@ import {
   type AlertPriority,
   type AlertStatus,
 } from '@/lib/alerts';
-import { defaultNejoicSettings, type NejoicSettings } from '@/lib/nejoic';
-import { NEJOIC_TIMEFRAMES, type NejoicTimeframeId } from '@/lib/nejoic-options';
 import type { Exchange } from '@/lib/watchlist';
 import { formatCurrency } from '@/lib/utils';
 import { SortableTh, useSortable } from '@/components/ui/sortable';
@@ -38,23 +34,11 @@ import { SymbolChartLink } from '@/components/chart/SymbolChartLink';
 export default function AlertsWorkspace() {
   const { alerts, ready, addAlert, updateStatus, deleteAlert } = useAlerts();
   const { lists, ready: watchReady } = useWatchlists();
-  const {
-    ready: nejoicReady,
-    settings: nejoicSettings,
-    updateSettings: updateNejoicSettings,
-  } = useNejoic();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<AlertInput>(emptyAlertInput());
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | AlertStatus>('ALL');
-  const [tgForm, setTgForm] = useState<NejoicSettings>(defaultNejoicSettings());
-  const [tgSaved, setTgSaved] = useState(false);
-
-  useEffect(() => {
-    if (!nejoicReady) return;
-    setTgForm({ ...defaultNejoicSettings(), ...nejoicSettings });
-  }, [nejoicReady, nejoicSettings]);
 
   const stats = useMemo(() => summarizeAlerts(alerts), [alerts]);
 
@@ -132,22 +116,6 @@ export default function AlertsWorkspace() {
     setForm((prev) => ({ ...prev, symbol, exchange }));
   }
 
-  function handleTelegramSave(e: React.FormEvent) {
-    e.preventDefault();
-    updateNejoicSettings({
-      telegramNotify: tgForm.telegramNotify !== false,
-      telegramInstrument: tgForm.telegramInstrument || 'AUTO',
-      telegramTimeframe: tgForm.telegramTimeframe || '15m',
-      telegramHeartbeatMinutes: Math.max(
-        3,
-        Math.min(60, Math.floor(Number(tgForm.telegramHeartbeatMinutes) || 15))
-      ),
-      telegramIncludeStudies: tgForm.telegramIncludeStudies !== false,
-    });
-    setTgSaved(true);
-    setTimeout(() => setTgSaved(false), 2000);
-  }
-
   if (!ready || !watchReady) {
     return (
       <div className="mx-auto max-w-[1200px] px-5 py-16 text-center text-sm text-sky-ink/50 md:px-8">
@@ -168,8 +136,8 @@ export default function AlertsWorkspace() {
               Alerts
             </h1>
             <InfoBubble title="About Alerts">
-              Price alerts plus Telegram bot delivery for Nejoic Live Pulse. Strategy maths stay in
-              Nejoic Settings — delivery controls live here.
+              Price alerts for watchlist symbols. Telegram delivery lives under{' '}
+              <strong>AI Agent System → Telegram Bot</strong>.
             </InfoBubble>
           </div>
         </div>
@@ -183,144 +151,25 @@ export default function AlertsWorkspace() {
         </button>
       </div>
 
-      <section className="mt-7 rounded-2xl border border-[#cfe0ee]/90 bg-white p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <Send className="h-4 w-4 text-sky-deep" strokeWidth={1.75} />
-              <h2 className="font-display text-[15px] font-semibold text-sky-ink">
-                Telegram bot
-              </h2>
+      <section className="mt-7 rounded-2xl border border-dashed border-[#cfe0ee] bg-sky-soft/30 px-4 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-start gap-2">
+            <Send className="mt-0.5 h-4 w-4 text-sky-deep" />
+            <div>
+              <p className="text-sm font-semibold text-sky-ink">Telegram Bot</p>
+              <p className="mt-0.5 text-[12px] text-sky-ink/55">
+                Message style, instrument, timeframe, and strategies live under AI Agent System →
+                Telegram Bot — not on Alerts.
+              </p>
             </div>
-            <p className="mt-1 max-w-2xl text-[12px] text-sky-ink/55">
-              Bot token &amp; allowed chat IDs stay in server env (
-              <code className="rounded bg-sky-soft px-1">TELEGRAM_BOT_TOKEN</code>). Here you
-              control what Nejoic sends to Telegram. Keep the Nejoic tab open for heartbeats.
-            </p>
           </div>
           <Link
-            href="/app/nejoic/settings?from=%2Fapp%2Falerts"
-            className="text-xs font-semibold text-sky-deep hover:underline"
+            href="/app/telegram"
+            className="inline-flex items-center gap-1 text-xs font-bold text-sky-deep hover:underline"
           >
-            Nejoic strategy settings →
+            Open Telegram Bot <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </div>
-
-        {nejoicReady ? (
-          <form onSubmit={handleTelegramSave} className="mt-4 space-y-3">
-            <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-[#cfe0ee] px-3 py-3">
-              <input
-                type="checkbox"
-                checked={tgForm.telegramNotify !== false}
-                onChange={(e) =>
-                  setTgForm((f) => ({ ...f, telegramNotify: e.target.checked }))
-                }
-                className="h-4 w-4 rounded border-[#cfe0ee] text-sky-deep"
-              />
-              <span className="text-sm text-sky-ink">Send Telegram reports (Nejoic Live Pulse)</span>
-            </label>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block text-sm">
-                <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-sky-ink/45">
-                  Instrument in Telegram
-                </span>
-                <select
-                  className={inputClass}
-                  value={tgForm.telegramInstrument || 'AUTO'}
-                  onChange={(e) =>
-                    setTgForm((f) => ({
-                      ...f,
-                      telegramInstrument: e.target
-                        .value as NejoicSettings['telegramInstrument'],
-                    }))
-                  }
-                >
-                  <option value="AUTO">AUTO — desk rules (Nifty / Gold / BTC by session)</option>
-                  <option value="NIFTY">Nifty only</option>
-                  <option value="GOLD">Gold only</option>
-                  <option value="BTC">BTC only</option>
-                </select>
-              </label>
-
-              <label className="block text-sm">
-                <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-sky-ink/45">
-                  Timeframe in Telegram
-                </span>
-                <select
-                  className={inputClass}
-                  value={tgForm.telegramTimeframe || '15m'}
-                  onChange={(e) =>
-                    setTgForm((f) => ({
-                      ...f,
-                      telegramTimeframe: e.target.value as NejoicTimeframeId,
-                    }))
-                  }
-                >
-                  {NEJOIC_TIMEFRAMES.map((tf) => (
-                    <option key={tf.id} value={tf.id}>
-                      {tf.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            <label className="block text-sm sm:max-w-xs">
-              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-sky-ink/45">
-                Heartbeat every (minutes)
-              </span>
-              <input
-                type="number"
-                min={3}
-                max={60}
-                className={inputClass}
-                value={tgForm.telegramHeartbeatMinutes ?? 15}
-                onChange={(e) =>
-                  setTgForm((f) => ({
-                    ...f,
-                    telegramHeartbeatMinutes: Math.max(
-                      3,
-                      Math.min(60, Number(e.target.value) || 15)
-                    ),
-                  }))
-                }
-              />
-              <span className="mt-1 block text-xs text-sky-ink/45">
-                Also sends sooner on signal flips or high conviction.
-              </span>
-            </label>
-
-            <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-[#cfe0ee] px-3 py-3">
-              <input
-                type="checkbox"
-                checked={tgForm.telegramIncludeStudies !== false}
-                onChange={(e) =>
-                  setTgForm((f) => ({ ...f, telegramIncludeStudies: e.target.checked }))
-                }
-                className="h-4 w-4 rounded border-[#cfe0ee] text-sky-deep"
-              />
-              <span className="text-sm text-sky-ink">
-                Include study parameters in every Telegram message
-              </span>
-            </label>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="submit"
-                className="inline-flex items-center gap-2 rounded-xl bg-sky-deep px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-ink"
-              >
-                <Save className="h-4 w-4" />
-                Save Telegram settings
-              </button>
-              {tgSaved && (
-                <span className="text-sm font-semibold text-emerald-600">Saved</span>
-              )}
-            </div>
-          </form>
-        ) : (
-          <p className="mt-4 text-sm text-sky-ink/50">Loading Telegram settings…</p>
-        )}
       </section>
 
       <div className="mt-7 grid grid-cols-2 gap-3 lg:grid-cols-4">

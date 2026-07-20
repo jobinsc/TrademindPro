@@ -247,22 +247,41 @@ export function runPriceAction(
 
   const close = candles[candles.length - 1]?.close ?? 0;
 
-  // Your PA playbook → Nifty options
-  if (trend === 1 && lastLabel === 'HL') {
+  // Your PA playbook → Nifty options (plain chart only)
+  // Primary: Higher Low → CE · Lower High → PE (exact method)
+  if (lastLabel === 'HL') {
     bias = 'CE';
-    setup = 'HL_IN_UPTREND';
-    confidence = 84;
-    entryHint = `Bullish PA: Higher Low @ ${support?.toFixed(0)}. BUY CE. Invalid if close breaks that HL/support.`;
+    setup = trend === 1 ? 'HL_IN_UPTREND' : 'HL_PRINT';
+    confidence = trend === 1 ? 84 : 74;
+    entryHint = `Price action: Higher Low @ ${support?.toFixed(0) ?? '—'}. BUY CE. Invalid if close breaks that HL/support.`;
+  } else if (lastLabel === 'LH') {
+    bias = 'PE';
+    setup = trend === -1 ? 'LH_IN_DOWNTREND' : 'LH_PRINT';
+    confidence = trend === -1 ? 84 : 74;
+    entryHint = `Price action: Lower High @ ${resistance?.toFixed(0) ?? '—'}. BUY PE. Invalid if close breaks that LH/resistance.`;
+  } else if (
+    resistance != null &&
+    close < resistance &&
+    labels.slice(-4).some((l) => l.label === 'LH')
+  ) {
+    bias = 'PE';
+    setup = 'LH_BREAK';
+    confidence = 80;
+    entryHint = `LH break: price under last LH/resistance ${resistance.toFixed(0)} → BUY PE.`;
+  } else if (
+    support != null &&
+    close > support &&
+    labels.slice(-4).some((l) => l.label === 'HL')
+  ) {
+    bias = 'CE';
+    setup = 'HL_BREAK';
+    confidence = 80;
+    entryHint = `HL reclaim: price above last HL/support ${support.toFixed(0)} → BUY CE.`;
   } else if (trend === 1 && lastLabel === 'HH' && support != null && close > support) {
     bias = 'CE';
     setup = 'HH_CONTINUATION';
     confidence = 70;
     entryHint = `Bullish PA: Higher High. Prefer CE on pullback to HL/support ${support.toFixed(0)} — do not chase.`;
-  } else if (trend === -1 && lastLabel === 'LH') {
-    bias = 'PE';
-    setup = 'LH_IN_DOWNTREND';
-    confidence = 84;
-    entryHint = `Bearish PA: Lower High @ ${resistance?.toFixed(0)}. BUY PE. Invalid if close breaks that LH/resistance.`;
   } else if (trend === -1 && lastLabel === 'LL' && resistance != null && close < resistance) {
     bias = 'PE';
     setup = 'LL_CONTINUATION';
@@ -298,13 +317,13 @@ export function runPriceAction(
     entryHint = `Downtrend below ${resistance.toFixed(0)} but wait for a fresh Lower High before PE.`;
   }
 
-  // Strict: only trade high-quality PA (matches “exact” preference)
+  // Strict quality gate: keep clear PA entries (HL/LH/break/sequence), flatten weak waits
   if (confidence < 70) {
     bias = 'FLAT';
     if (setup === 'WAIT' || setup.includes('WAIT')) {
       entryHint =
         entryHint +
-        ' Nejoic rule: only HL→CE or LH→PE (or clear HH/HL / LL/LH sequences).';
+        ' Nejoic rule: only HL→CE or LH→PE (or clear HL/LH break).';
     }
   }
 

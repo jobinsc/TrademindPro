@@ -2,10 +2,10 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
 import {
   Activity,
   Bot,
+  OctagonX,
   Play,
   Send,
   Square,
@@ -13,6 +13,12 @@ import {
   Zap,
 } from 'lucide-react';
 import InfoBubble from '@/components/ui/InfoBubble';
+import {
+  ModuleRunButton,
+  ModuleSettingsButton,
+  ModuleSettingsPanel,
+} from '@/components/ui/ModuleTabShell';
+import { NejoicSettingsPanel } from '@/components/nejoic/NejoicSettingsWorkspace';
 import {
   CartesianGrid,
   Line,
@@ -26,9 +32,10 @@ import {
 import { useNejoic } from '@/hooks/useNejoic';
 import { deskLabel, getActiveDesk } from '@/lib/market-desk';
 import { NEJOIC_NAME } from '@/lib/nejoic';
-import { hrefWithFrom } from '@/lib/nav-return';
 import { formatCurrency } from '@/lib/utils';
 import FullStopBar from '@/components/trading/FullStopBar';
+import { getBrokeragePerLot } from '@/lib/brokerage';
+import { readPaperTradeSettings } from '@/lib/paper-trade-settings';
 
 function statusLabel(status: string, autoOn: boolean) {
   if (status === 'armed' || status === 'trading') return autoOn ? 'ON' : 'OFF';
@@ -39,7 +46,6 @@ function statusLabel(status: string, autoOn: boolean) {
 }
 
 export default function NejoicWorkspace() {
-  const pathname = usePathname();
   const {
     ready,
     settings,
@@ -58,8 +64,14 @@ export default function NejoicWorkspace() {
     ask,
     clearChat,
     requestPulse,
+    fullStop,
+    updateSettings,
   } = useNejoic();
   const [prompt, setPrompt] = useState('');
+  const brokPerLot =
+    readPaperTradeSettings().brokeragePerLot ||
+    settings.brokeragePerLot ||
+    getBrokeragePerLot();
 
   const chartData = useMemo(() => {
     const labelMap = new Map(
@@ -79,6 +91,11 @@ export default function NejoicWorkspace() {
   const openTrade = trades.find((t) => t.status === 'open');
   const locked =
     settings.status === 'target_hit' || settings.status === 'stopped_loss';
+  const settingsOpen = settings.settingsOpen ?? false;
+
+  function toggleAuto() {
+    setAutoTrade(!settings.autoTrade);
+  }
 
   if (!ready) {
     return (
@@ -111,29 +128,32 @@ export default function NejoicWorkspace() {
                 <strong>Weekend</strong> Sat–Sun: <strong>BTC only</strong> — no other instruments.
               </p>
               <p className="mt-2">
-                Telegram delivery (on/off, instrument, timeframe, heartbeat) is under{' '}
-                <strong>Alerts → Telegram bot</strong>. Strategy maths stay in Nejoic Settings.
-                Sends on signal flips, high score, or your heartbeat. Daily rules +₹
-                {settings.dailyProfitTarget} / -₹{settings.dailyMaxLoss}.
+                Paper rules: daily +₹{settings.dailyProfitTarget} / -₹{settings.dailyMaxLoss}. Telegram
+                messages are configured under <strong>AI Agents → Telegram Bot</strong> (separate).
               </p>
             </InfoBubble>
           </div>
           <p className="mt-2 text-[12px] font-semibold text-sky-deep">{deskLabel(getActiveDesk())}</p>
           <div className="mt-2 flex flex-wrap gap-2">
             <Link
-              href={hrefWithFrom('/app/nejoic/settings', pathname || '/app/nejoic')}
+              href="/app/telegram"
               className="inline-flex items-center gap-1.5 rounded-xl border border-[#cfe0ee] bg-white px-3 py-1.5 text-sm font-semibold text-sky-deep hover:bg-sky-soft/40"
             >
-              Strategy settings
+              Telegram Bot
             </Link>
             <Link
-              href="/app/alerts"
+              href="/app/paper-trading"
               className="inline-flex items-center gap-1.5 rounded-xl border border-[#cfe0ee] bg-white px-3 py-1.5 text-sm font-semibold text-sky-deep hover:bg-sky-soft/40"
             >
-              Telegram · Alerts
+              Paper trading
             </Link>
           </div>
-        </div>        <div className="flex flex-col items-end gap-2">
+        </div>
+        <div className="flex flex-col items-end gap-2">
+          <ModuleSettingsButton
+            open={settingsOpen}
+            onToggle={() => updateSettings({ settingsOpen: !settingsOpen })}
+          />
           <span
             className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] font-semibold ${
               locked
@@ -162,6 +182,47 @@ export default function NejoicWorkspace() {
         <FullStopBar />
       </div>
 
+      <ModuleSettingsPanel
+        open={settingsOpen}
+        title={`${NEJOIC_NAME} settings`}
+        description="Strategies, analysis, timeframes, risk, SL/target, and session filters — saved for Nejoic (Nifty) only."
+        controls={
+          <>
+            <ModuleRunButton variant="start" onClick={toggleAuto} disabled={settings.autoTrade || locked}>
+              <Play className="h-4 w-4" />
+              Start auto
+            </ModuleRunButton>
+            <ModuleRunButton variant="stop" onClick={toggleAuto} disabled={!settings.autoTrade}>
+              <Square className="h-4 w-4" />
+              Stop auto
+            </ModuleRunButton>
+            <ModuleRunButton variant="force" onClick={() => fullStop(false)}>
+              <OctagonX className="h-4 w-4" />
+              Force stop
+            </ModuleRunButton>
+            <ModuleRunButton variant="force" onClick={() => fullStop(true)}>
+              <OctagonX className="h-4 w-4" />
+              Force stop + exit
+            </ModuleRunButton>
+          </>
+        }
+      >
+        <NejoicSettingsPanel embedded />
+      </ModuleSettingsPanel>
+
+      {!settingsOpen && (
+        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-[#cfe0ee] bg-sky-soft/30 px-4 py-3 text-sm text-sky-ink/70">
+          <span>
+            Auto {settings.autoTrade ? 'ON' : 'OFF'} · {settings.strategyIds?.length ?? 0} strategies ·{' '}
+            {settings.primaryTimeframe} · Target +{formatCurrency(settings.dailyProfitTarget)}
+          </span>
+          <ModuleRunButton variant="start" onClick={toggleAuto} disabled={settings.autoTrade || locked}>
+            <Play className="h-4 w-4" />
+            Quick start
+          </ModuleRunButton>
+        </div>
+      )}
+
       <div className="mt-4 rounded-2xl border border-[#cfe0ee] bg-sky-soft/50 px-4 py-3 text-[12px] text-sky-ink/75">
         <p className="font-semibold text-sky-ink">Monday open checklist</p>
         <ul className="mt-1.5 list-inside list-disc space-y-0.5">
@@ -170,15 +231,19 @@ export default function NejoicWorkspace() {
             {getActiveDesk() === 'INDIA' ? ' — Nifty paper allowed' : ' — switches to Nifty at 09:15 IST'}
           </li>
           <li>
-            Auto: {settings.autoTrade ? 'ON ✓' : 'OFF — press Start before 9:15'}
+            Auto: {settings.autoTrade ? 'ON ✓' : 'OFF — use Paper Trading → Start auto'}
             {' · '}
-            Telegram: {settings.telegramNotify === false ? 'OFF' : 'ON ✓'} ·{' '}
-            {settings.telegramInstrument || 'AUTO'} · {settings.telegramTimeframe || '15m'} · every{' '}
-            {settings.telegramHeartbeatMinutes || 15}m
+            Brokerage ₹{brokPerLot}/lot (Paper Trading settings)
           </li>
           <li>
-            Keep this tab open for Telegram heartbeats (every{' '}
-            {settings.telegramHeartbeatMinutes || 15} min)
+            All paper settings &amp; results →{' '}
+            <Link href="/app/paper-trading" className="font-semibold text-sky-deep hover:underline">
+              Paper Trading
+            </Link>
+            . Telegram →{' '}
+            <Link href="/app/telegram" className="font-semibold text-sky-deep hover:underline">
+              Telegram Bot
+            </Link>
           </li>
           <li>
             Broker:{' '}
@@ -524,21 +589,22 @@ export default function NejoicWorkspace() {
 
       <section className="mt-5 rounded-2xl border border-[#cfe0ee]/90 bg-white p-4">
         <h2 className="font-display text-[15px] font-semibold text-sky-ink">
-          Nejoic trades (paper) — entry/exit use <strong>live Upstox option LTP</strong> when
-          broker is connected; falls back to estimate only if Upstox is offline.
+          Nejoic trades (paper) — net P&amp;L after{' '}
+          <strong>₹{brokPerLot}/lot brokerage</strong>. LTP from Upstox when connected.
         </h2>
         {trades.length === 0 ? (
           <p className="mt-3 text-sm text-sky-ink/45">No trades yet.</p>
         ) : (
           <div className="mt-3 overflow-x-auto">
-            <table className="w-full min-w-[640px] text-left text-sm">
+            <table className="w-full min-w-[720px] text-left text-sm">
               <thead className="text-[11px] uppercase tracking-wide text-sky-ink/40">
                 <tr>
                   <th className="pb-2 font-semibold">Time</th>
                   <th className="pb-2 font-semibold">Contract</th>
                   <th className="pb-2 font-semibold">Entry</th>
                   <th className="pb-2 font-semibold">Exit</th>
-                  <th className="pb-2 font-semibold">P&amp;L</th>
+                  <th className="pb-2 font-semibold">Brok</th>
+                  <th className="pb-2 font-semibold">Net P&amp;L</th>
                   <th className="pb-2 font-semibold">Status</th>
                   <th className="pb-2 font-semibold">Action</th>
                 </tr>
@@ -557,6 +623,11 @@ export default function NejoicWorkspace() {
                     </td>
                     <td className="py-2.5">₹{t.entryPremium}</td>
                     <td className="py-2.5">{t.exitPremium != null ? `₹${t.exitPremium}` : '—'}</td>
+                    <td className="py-2.5 text-sky-ink/50">
+                      {t.status === 'closed'
+                        ? formatCurrency(t.brokerage ?? t.lots * brokPerLot)
+                        : '—'}
+                    </td>
                     <td
                       className={`py-2.5 font-semibold ${
                         (t.pnl ?? 0) > 0

@@ -16,7 +16,6 @@ import {
   CandlestickChart,
   Bell,
   Workflow,
-  Zap,
   FlaskConical,
   Shield,
   Bot,
@@ -31,6 +30,7 @@ import {
   PanelLeft,
   Calculator,
   X,
+  Send,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/components/auth/AuthProvider';
@@ -89,7 +89,6 @@ const navGroups: NavGroup[] = [
     title: 'Automated Trading',
     items: [
       { href: '/app/strategies', label: 'Strategy Builder', icon: Workflow },
-      { href: '/app/automation', label: 'Start / Stop', icon: Zap },
       { href: '/app/paper-trading', label: 'Paper Trading', icon: FileText },
       { href: '/app/backtesting', label: 'Backtesting', icon: FlaskConical },
       { href: '/app/risk', label: 'Risk Management', icon: Shield },
@@ -104,15 +103,6 @@ const navGroups: NavGroup[] = [
         icon: Sparkles,
         adminOnly: true,
         exact: true,
-        children: [
-          {
-            href: '/app/nejoic/settings',
-            label: 'Settings',
-            icon: Settings,
-            adminOnly: true,
-            exact: true,
-          },
-        ],
       },
       {
         href: '/app/jimbo',
@@ -120,15 +110,13 @@ const navGroups: NavGroup[] = [
         icon: LineChart,
         adminOnly: true,
         exact: true,
-        children: [
-          {
-            href: '/app/jimbo/settings',
-            label: 'Settings',
-            icon: Settings,
-            adminOnly: true,
-            exact: true,
-          },
-        ],
+      },
+      {
+        href: '/app/telegram',
+        label: 'Telegram Bot',
+        icon: Send,
+        adminOnly: true,
+        exact: true,
       },
       { href: '/app/ai', label: 'AI Agents Hub', icon: Bot },
     ],

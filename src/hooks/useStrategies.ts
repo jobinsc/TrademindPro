@@ -11,7 +11,26 @@ function read(): Strategy[] {
     const raw = localStorage.getItem(KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as Strategy[];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((s) => ({
+      ...s,
+      symbol:
+        s.symbol?.trim() ||
+        (s.market === 'NIFTY'
+          ? 'NIFTY'
+          : s.market === 'BANKNIFTY'
+            ? 'BANKNIFTY'
+            : ''),
+      stockName: s.stockName || '',
+      stopLossPoints:
+        s.stopLossPoints != null && Number(s.stopLossPoints) > 0
+          ? Number(s.stopLossPoints)
+          : null,
+      targetPoints:
+        s.targetPoints != null && Number(s.targetPoints) > 0
+          ? Number(s.targetPoints)
+          : null,
+    }));
   } catch {
     return [];
   }

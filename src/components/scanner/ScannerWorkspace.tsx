@@ -1,19 +1,27 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowRight,
   Check,
   Eye,
+  OctagonX,
   Play,
   Radar,
   RotateCcw,
   Search,
   Settings2,
+  Square,
   X,
 } from 'lucide-react';
 import InfoBubble from '@/components/ui/InfoBubble';
+import {
+  ModuleRunButton,
+  ModuleSettingsButton,
+  ModuleSettingsPanel,
+} from '@/components/ui/ModuleTabShell';
+import { useScannerModuleSettings } from '@/hooks/useScannerModuleSettings';
 import { SymbolChartLink } from '@/components/chart/SymbolChartLink';
 import { useWatchlists } from '@/hooks/useWatchlists';
 import {
@@ -37,6 +45,10 @@ import {
 import { getUpstoxAccessToken } from '@/lib/upstox-client';
 import { formatCurrency, formatPercent } from '@/lib/utils';
 import { SortableTh, useSortable } from '@/components/ui/sortable';
+import {
+  ScanTemplateGroupedList,
+  scanSettingsForTemplate,
+} from '@/components/ui/ScanTemplatePicker';
 
 const CATEGORIES: { id: 'ALL' | ScanCategory; label: string }[] = [
   { id: 'ALL', label: 'All' },
@@ -53,6 +65,9 @@ type ExchangeOpt = 'NSE' | 'BSE';
 
 export default function ScannerWorkspace() {
   const { addSymbol } = useWatchlists();
+  const { ready: moduleReady, settings: moduleSettings, update: updateModule } =
+    useScannerModuleSettings();
+  const abortRef = useRef<AbortController | null>(null);
   const [category, setCategory] = useState<'ALL' | ScanCategory>('ALL');
   const [selectedId, setSelectedId] = useState(SCAN_TEMPLATES[0].id);
   const [exchange, setExchange] = useState<ExchangeOpt>('NSE');
@@ -85,6 +100,12 @@ export default function ScannerWorkspace() {
       })
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (!moduleReady) return;
+    setExchange(moduleSettings.exchange);
+    setCategory(moduleSettings.category as 'ALL' | ScanCategory);
+  }, [moduleReady, moduleSettings.exchange, moduleSettings.category]);
 
   useEffect(() => {
     setSettings(readScanSettings(selectedId));
@@ -186,6 +207,7 @@ export default function ScannerWorkspace() {
   async function handleRun() {
     setRunning(true);
     setToast('');
+    abortRef.current = new AbortController();
     const token = getUpstoxAccessToken();
     setLive(Boolean(token));
     writeScanSettings(selectedId, settings);
@@ -199,6 +221,7 @@ export default function ScannerWorkspace() {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
+          signal: abortRef.current.signal,
           body: JSON.stringify({
             templateId: selected.id,
             exchange,
@@ -247,16 +270,44 @@ export default function ScannerWorkspace() {
         window.setTimeout(() => setToast(''), 3500);
       }
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        setToast('Scan stopped');
+      } else {
       const message = err instanceof Error ? err.message : 'Scan failed';
       setToast(message);
       const rows = runScan(selected.id);
       setResults(rows);
       setSource('demo');
       setLastRan(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }));
+      }
     } finally {
       setRunning(false);
+      abortRef.current = null;
     }
   }
+
+  function handleStopScan() {
+    abortRef.current?.abort();
+    setRunning(false);
+    setToast('Scan stopped');
+  }
+
+  function handleForceStopScan() {
+    abortRef.current?.abort();
+    setRunning(false);
+    setResults([]);
+    setToast('Force stopped — results cleared');
+  }
+
+  if (!moduleReady) {
+    return (
+      <div className="mx-auto max-w-[1200px] px-5 py-16 text-center text-sm text-sky-ink/50">
+        Loading scanner…
+      </div>
+    );
+  }
+
+  const settingsOpen = moduleSettings.settingsOpen;
 
   function handleAddWatch(row: ScanResult) {
     const result = addSymbol({
@@ -306,6 +357,11 @@ export default function ScannerWorkspace() {
           >
             {live ? 'Live · Upstox' : 'Demo'}
           </span>
+          <div className="flex flex-wrap gap-2">
+            <ModuleSettingsButton
+              open={settingsOpen}
+              onToggle={() => updateModule({ settingsOpen: !settingsOpen })}
+            />
           <button
             type="button"
             onClick={handleRun}
@@ -321,9 +377,120 @@ export default function ScannerWorkspace() {
               </>
             )}
           </button>
+          </div>
         </div>
       </div>
 
+      <ModuleSettingsPanel
+        open={settingsOpen}
+        title="Stock scanner settings"
+        description={`Exchange, category, indicator periods for ${selected.name}, and scan filters — only for this tab.`}
+        controls={
+          <>
+            <ModuleRunButton variant="start" onClick={handleRun} disabled={running}>
+              <Play className="h-4 w-4" />
+              Start scan
+            </ModuleRunButton>
+            <ModuleRunButton variant="stop" onClick={handleStopScan} disabled={!running}>
+              <Square className="h-4 w-4" />
+              Stop scan
+            </ModuleRunButton>
+            <ModuleRunButton variant="force" onClick={handleForceStopScan}>
+              <OctagonX className="h-4 w-4" />
+              Force stop
+            </ModuleRunButton>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-sky-ink/40">
+              Exchange
+            </span>
+            {(['NSE', 'BSE'] as ExchangeOpt[]).map((ex) => (
+              <button
+                key={ex}
+                type="button"
+                onClick={() => {
+                  setExchange(ex);
+                  updateModule({ exchange: ex });
+                }}
+                className={`rounded-full px-4 py-1.5 text-xs font-bold transition ${
+                  exchange === ex
+                    ? 'bg-sky-deep text-white'
+                    : 'bg-white text-sky-ink/65 ring-1 ring-[#cfe0ee] hover:text-sky-ink'
+                }`}
+              >
+                {ex}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {CATEGORIES.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => {
+                  setCategory(c.id);
+                  updateModule({ category: c.id });
+                }}
+                className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                  category === c.id
+                    ? 'bg-sky-deep text-white'
+                    : 'bg-white text-sky-ink/65 ring-1 ring-[#cfe0ee] hover:text-sky-ink'
+                }`}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+          <div className="rounded-xl border border-sky-mid/25 bg-sky-soft/50 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-sky-mid">
+                  Indicator settings · {selected.name}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={resetInlineSettings}
+                className="rounded-lg p-1.5 text-sky-ink/45 hover:bg-white hover:text-sky-ink"
+                title="Reset periods"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            {indicatorFieldsForTemplate(selectedId).length > 0 ? (
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {indicatorFieldsForTemplate(selectedId).map((field) => (
+                  <label key={field.key} className="block">
+                    <span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.08em] text-sky-ink/55">
+                      {field.label}
+                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      step={field.step}
+                      value={settings[field.key]}
+                      onChange={(e) => updateSetting(field.key, Number(e.target.value))}
+                      className="w-full rounded-xl border border-[#cfe0ee] bg-white px-3 py-2.5 text-sm font-semibold text-sky-ink outline-none focus:ring-2 focus:ring-sky-mid/30"
+                    />
+                  </label>
+                ))}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => openSettings(selectedId)}
+              className="mt-3 w-full rounded-xl border border-[#cfe0ee] bg-white py-2 text-xs font-semibold text-sky-deep hover:bg-sky-mist"
+            >
+              More filters (volume, change %, results…)
+            </button>
+          </div>
+        </div>
+      </ModuleSettingsPanel>
+
+      {!settingsOpen && (
       <div className="mt-5 flex flex-wrap items-center gap-2">
         <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-sky-ink/40">
           Exchange
@@ -332,7 +499,10 @@ export default function ScannerWorkspace() {
           <button
             key={ex}
             type="button"
-            onClick={() => setExchange(ex)}
+            onClick={() => {
+              setExchange(ex);
+              updateModule({ exchange: ex });
+            }}
             className={`rounded-full px-4 py-1.5 text-xs font-bold transition ${
               exchange === ex
                 ? 'bg-sky-deep text-white'
@@ -348,6 +518,7 @@ export default function ScannerWorkspace() {
           </button>
         ))}
       </div>
+      )}
 
       {toast && (
         <div
@@ -361,12 +532,16 @@ export default function ScannerWorkspace() {
         </div>
       )}
 
+      {!settingsOpen && (
       <div className="mt-6 flex flex-wrap gap-2">
         {CATEGORIES.map((c) => (
           <button
             key={c.id}
             type="button"
-            onClick={() => setCategory(c.id)}
+            onClick={() => {
+              setCategory(c.id);
+              updateModule({ category: c.id });
+            }}
             className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
               category === c.id
                 ? 'bg-sky-deep text-white'
@@ -377,6 +552,7 @@ export default function ScannerWorkspace() {
           </button>
         ))}
       </div>
+      )}
 
       <div className="mt-6 grid gap-4 lg:grid-cols-5">
         <section className="rounded-2xl border border-[#cfe0ee]/90 bg-white p-4 lg:col-span-2">
@@ -389,59 +565,15 @@ export default function ScannerWorkspace() {
             </div>
             <span className="text-[11px] text-sky-ink/40">{templates.length}</span>
           </div>
-          <ul className="max-h-[42vh] space-y-1.5 overflow-y-auto pr-1">
-            {templates.map((t) => {
-              const saved = t.id === selectedId ? settings : readScanSettings(t.id);
-              const summary = settingsSummary(t.id, saved);
-              return (
-              <li key={t.id}>
-                <div
-                  className={`flex items-start gap-1 rounded-xl transition ${
-                    selectedId === t.id
-                      ? 'bg-sky-mist ring-1 ring-sky-mid/30'
-                      : 'hover:bg-sky-soft/70'
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setSelectedId(t.id)}
-                    className="min-w-0 flex-1 px-3 py-2.5 text-left"
-                  >
-                    <p className="text-sm font-semibold text-sky-ink">{t.name}</p>
-                    <p className="mt-0.5 text-[12px] text-sky-ink/50">{t.description}</p>
-                    {summary && (
-                      <p className="mt-1 text-[11px] font-semibold text-sky-deep">{summary}</p>
-                    )}
-                    <div className="mt-1.5 flex flex-wrap gap-1">
-                      <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-sky-mid">
-                        {t.category}
-                      </span>
-                      {t.indicators?.map((ind) => (
-                        <span
-                          key={ind}
-                          className="rounded-md bg-white/80 px-1.5 py-0.5 text-[10px] font-medium text-sky-ink/55 ring-1 ring-[#cfe0ee]"
-                        >
-                          {ind}
-                        </span>
-                      ))}
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    title={`Change periods · ${t.name}`}
-                    aria-label={`Settings for ${t.name}`}
-                    onClick={(e) => openSettings(t.id, e)}
-                    className="mr-2 mt-2 shrink-0 rounded-lg bg-white p-2 text-sky-deep shadow-sm ring-1 ring-[#cfe0ee] transition hover:bg-sky-soft"
-                  >
-                    <Settings2 className="h-4 w-4" strokeWidth={1.75} />
-                  </button>
-                </div>
-              </li>
-              );
-            })}
-          </ul>
+          <ScanTemplateGroupedList
+            templates={templates}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            onOpenSettings={(id, e) => openSettings(id, e)}
+            getSettings={(id) => scanSettingsForTemplate(id, selectedId, settings)}
+          />
 
-          {/* Always-visible period editor for selected strategy */}
+          {/* Indicator editor — always visible so MA 9/21 etc. can be changed */}
           <div className="mt-4 rounded-xl border border-sky-mid/25 bg-sky-soft/50 p-3">
             <div className="flex items-center justify-between gap-2">
               <div>
@@ -482,9 +614,18 @@ export default function ScannerWorkspace() {
               </div>
             ) : (
               <p className="mt-3 text-[12px] text-sky-ink/50">
-                This template has no MA/RSI-style period — use filters below if needed.
+                This scan uses price/volume filters only. For MA crossover, pick{' '}
+                <strong className="text-sky-ink">EMA 9/21 Cross</strong> under Moving averages
+                — then set Fast MA / Slow MA (default 9/21).
               </p>
             )}
+            {indicatorFieldsForTemplate(selectedId).some(
+              (f) => f.key === 'emaFast' || f.key === 'emaSlow'
+            ) ? (
+              <p className="mt-2 text-[11px] font-medium text-sky-deep">
+                Current: Fast MA {settings.emaFast} · Slow MA {settings.emaSlow}
+              </p>
+            ) : null}
             <button
               type="button"
               onClick={() => openSettings(selectedId)}

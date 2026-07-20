@@ -17,6 +17,7 @@ import {
   type JimboState,
   type JimboTrade,
 } from '@/lib/jimbo';
+import { normalizeStrategyIds } from '@/lib/nejoic-options';
 
 const KEY = 'trademindpro_jimbo_v1';
 
@@ -37,8 +38,11 @@ function read(): JimboState {
     const raw = localStorage.getItem(KEY);
     if (!raw) return empty();
     const p = JSON.parse(raw) as Partial<JimboState>;
+    const merged = { ...defaultJimboSettings(), ...p.settings };
+    merged.strategyIds = normalizeStrategyIds(merged.strategyIds, merged.strategyId);
+    merged.strategyId = merged.strategyIds[0];
     return {
-      settings: { ...defaultJimboSettings(), ...p.settings },
+      settings: merged,
       signals: Array.isArray(p.signals) ? p.signals : [],
       lastScanAt: p.lastScanAt ?? null,
       trades: Array.isArray(p.trades) ? p.trades : [],
@@ -175,12 +179,15 @@ export function useJimbo() {
         return;
       }
       persist(
-        pushEvent(on ? 'Jimbo STARTED (paper) for liquid stock options.' : 'Jimbo STOPPED.', {
+        pushEvent(
+          on
+            ? `Jimbo STARTED (${state.settings.mode}) for liquid stock options.`
+            : 'Jimbo STOPPED.',
+          {
           ...state,
           settings: {
             ...state.settings,
             autoTrade: on,
-            mode: 'paper',
             status: on ? 'armed' : 'scanning',
             updatedAt: new Date().toISOString(),
           },
@@ -357,11 +364,12 @@ export function useJimbo() {
         autoTrade: patch.autoTrade ?? state.settings.autoTrade,
         updatedAt: new Date().toISOString(),
       };
+      const uiOnly = Object.keys(patch).length === 1 && 'settingsOpen' in patch;
+      const nextState = { ...state, settings: nextSettings };
       persist(
-        pushEvent('Jimbo settings saved.', {
-          ...state,
-          settings: nextSettings,
-        })
+        uiOnly
+          ? nextState
+          : pushEvent('Jimbo settings saved.', nextState)
       );
     },
     [snapshot, persist, pushEvent]

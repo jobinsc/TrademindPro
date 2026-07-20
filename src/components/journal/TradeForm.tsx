@@ -4,7 +4,6 @@ import { useMemo, useState } from 'react';
 import {
   EMOTIONS,
   SEGMENTS,
-  STRATEGIES,
   TRADE_STYLES,
   calcPnL,
   todayISO,
@@ -16,6 +15,7 @@ import {
 } from '@/lib/trades';
 import { formatCurrency } from '@/lib/utils';
 import SymbolAutocomplete from '@/components/ui/SymbolAutocomplete';
+import { StrategyGroupedSelect } from '@/components/ui/StrategyPicker';
 
 export default function TradeForm({
   initial,
@@ -294,17 +294,14 @@ export default function TradeForm({
       {mode === 'full' && (
         <>
           <Field label="Strategy">
-            <select
+            <StrategyGroupedSelect
               value={form.strategy}
-              onChange={(e) => set('strategy', e.target.value)}
+              onChange={(v) => set('strategy', String(v))}
               className={inputClass}
-            >
-              {STRATEGIES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
+              nejoicOnly={false}
+              valueField="name"
+              includeJournalExtras
+            />
           </Field>
 
           <Field label="Tags">

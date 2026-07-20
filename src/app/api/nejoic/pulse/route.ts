@@ -26,14 +26,23 @@ export async function POST(req: NextRequest) {
     tf?: string;
     instrument?: PulseInstrument;
     settings?: Partial<NejoicSettings>;
+    messageStyle?: 'full' | 'compact' | 'signal_only';
   };
-  const settings = mergeSettings(body.settings);
+  const settings = mergeSettings({
+    ...body.settings,
+    ...(body.messageStyle ? { messageStyle: body.messageStyle } as Partial<NejoicSettings> : {}),
+  });
+  // messageStyle is carried on settings bag for formatPulseText
+  const withStyle = {
+    ...settings,
+    messageStyle: body.messageStyle || 'full',
+  } as NejoicSettings & { messageStyle?: 'full' | 'compact' | 'signal_only' };
   const tf = parseTimeframe(
     body.tf || settings.telegramTimeframe || settings.primaryTimeframe || '15m'
   );
   const instrument = (body.instrument ||
     settings.telegramInstrument ||
     'AUTO') as PulseInstrument;
-  const pulse = await buildLivePulse(tf, settings, { instrument });
+  const pulse = await buildLivePulse(tf, withStyle, { instrument });
   return NextResponse.json(pulse);
 }

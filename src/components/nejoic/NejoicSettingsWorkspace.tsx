@@ -1,9 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { Bell, Save, Sparkles } from 'lucide-react';
+import { Bell, Save } from 'lucide-react';
 import { useNejoic } from '@/hooks/useNejoic';
 import {
   defaultNejoicSettings,
@@ -14,34 +13,48 @@ import {
 import {
   NEJOIC_ANALYSIS_STYLES,
   NEJOIC_STRATEGIES,
-  NEJOIC_STRATEGY_GROUPS,
   NEJOIC_TIMEFRAMES,
   normalizeStrategyIds,
   type NejoicAnalysisStyle,
   type NejoicStrategyId,
   type NejoicTimeframeId,
 } from '@/lib/nejoic-options';
-import { getReturnPath } from '@/lib/nav-return';
-import InfoBubble from '@/components/ui/InfoBubble';
-import BackToLink from '@/components/ui/BackToLink';
+import {
+  STRATEGY_QUICK_PRESETS,
+  StrategyGroupedMulti,
+} from '@/components/ui/StrategyPicker';
+import type { CatalogStrategyId } from '@/lib/strategy-catalog';
 
 const inputClass =
   'w-full rounded-xl border border-[#cfe0ee] bg-white px-3 py-2.5 text-sm text-sky-ink outline-none focus:ring-2 focus:ring-sky-mid/30';
 
-export default function NejoicSettingsWorkspace() {
-  const router = useRouter();
+export function NejoicSettingsPanel({ embedded = false }: { embedded?: boolean }) {
   const { ready, settings, updateSettings } = useNejoic();
   const [form, setForm] = useState<NejoicSettings>(defaultNejoicSettings());
   const [saved, setSaved] = useState(false);
+  const [hint, setHint] = useState('');
+  const hydratedAt = useRef<string | null>(null);
+  const dirty = useRef(false);
 
   useEffect(() => {
     if (!ready) return;
+    const stamp = settings.updatedAt || '';
+    // Don't wipe mid-edit when live feed / other tabs refresh storage
+    if (dirty.current) return;
+    if (hydratedAt.current === stamp && hydratedAt.current !== null) return;
+
     const merged = { ...defaultNejoicSettings(), ...settings };
     merged.strategyIds = normalizeStrategyIds(merged.strategyIds, merged.strategyId);
     setForm(merged);
+    hydratedAt.current = stamp;
   }, [ready, settings]);
 
+  function markDirty() {
+    dirty.current = true;
+  }
+
   if (!ready) {
+    if (embedded) return null;
     return (
       <div className="mx-auto max-w-[800px] px-5 py-16 text-center text-sm text-sky-ink/50">
         Loading {NEJOIC_NAME} settings…
@@ -52,10 +65,12 @@ export default function NejoicSettingsWorkspace() {
   function setNum<K extends keyof NejoicSettings>(key: K, value: string) {
     const n = Number(value);
     if (Number.isNaN(n)) return;
+    markDirty();
     setForm((f) => ({ ...f, [key]: n }));
   }
 
   function toggleWatchTf(id: NejoicTimeframeId) {
+    markDirty();
     setForm((f) => {
       const cur = f.watchTimeframes || [];
       if (cur.includes(id)) {
@@ -65,25 +80,39 @@ export default function NejoicSettingsWorkspace() {
     });
   }
 
-  function toggleStrategy(id: NejoicStrategyId) {
-    setForm((f) => {
-      const cur = normalizeStrategyIds(f.strategyIds, f.strategyId);
-      const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
-      // Keep at least one strategy selected
-      const strategyIds = next.length ? next : [id];
-      return { ...f, strategyIds, strategyId: strategyIds[0] };
-    });
+  function changeSelected(ids: NejoicStrategyId[]) {
+    const strategyIds = normalizeStrategyIds(ids, ids[0]);
+    const strategyId = strategyIds[0];
+    const stamp = new Date().toISOString();
+    dirty.current = false;
+    hydratedAt.current = stamp;
+    setForm((f) => ({ ...f, strategyIds, strategyId, updatedAt: stamp }));
+    updateSettings({ strategyIds, strategyId });
+    setHint(`${strategyIds.length} strategies ON · saved`);
+    window.setTimeout(() => setHint(''), 1600);
+  }
+
+  function applyStrategyPreset(strategyIds: NejoicStrategyId[], strategyId: NejoicStrategyId) {
+    const stamp = new Date().toISOString();
+    dirty.current = false;
+    hydratedAt.current = stamp;
+    setForm((f) => ({ ...f, strategyIds, strategyId, updatedAt: stamp }));
+    updateSettings({ strategyIds, strategyId });
+    setHint(`${strategyIds.length} strategies ON · saved`);
+    window.setTimeout(() => setHint(''), 1600);
   }
 
   function handleSave(e: React.FormEvent) {
     e.preventDefault();
     const analysisStyle = form.analysisStyle || 'strict';
     const strategyIds = normalizeStrategyIds(form.strategyIds, form.strategyId);
+    dirty.current = false;
     updateSettings({
       dailyProfitTarget: Math.max(100, form.dailyProfitTarget),
       dailyMaxLoss: Math.max(100, form.dailyMaxLoss),
       lotSize: Math.max(1, Math.floor(form.lotSize)),
       maxLotsPerTrade: Math.min(5, Math.max(1, Math.floor(form.maxLotsPerTrade))),
+      brokeragePerLot: Math.max(0, Math.round(Number(form.brokeragePerLot) || 175)),
       leftBars: Math.min(20, Math.max(1, Math.floor(form.leftBars))),
       rightBars: Math.min(20, Math.max(1, Math.floor(form.rightBars))),
       minConfidence: Math.min(95, Math.max(50, Math.floor(form.minConfidence))),
@@ -106,12 +135,13 @@ export default function NejoicSettingsWorkspace() {
       tradeOnlyMarketHours: form.tradeOnlyMarketHours !== false,
       ignoreDailyLimits: Boolean(form.ignoreDailyLimits),
       askMode: form.askMode,
+      targetPoints: Math.max(1, Number(form.targetPoints) || 40),
+      stopLossPoints: Math.max(1, Number(form.stopLossPoints) || 25),
+      trailingStopPoints: Math.max(0, Number(form.trailingStopPoints) || 0),
+      trailingActivatePoints: Math.max(0, Number(form.trailingActivatePoints) || 0),
       mode: 'paper',
     });
     setSaved(true);
-    const from = new URLSearchParams(window.location.search).get('from');
-    const back = getReturnPath('/app/nejoic', from);
-    setTimeout(() => router.push(back), 450);
   }
 
   const selected = normalizeStrategyIds(form.strategyIds, form.strategyId);
@@ -122,30 +152,7 @@ export default function NejoicSettingsWorkspace() {
   const showOrb = selected.includes('orb');
 
   return (
-    <div className="mx-auto w-full max-w-[800px] px-5 py-7 md:px-8 md:py-9">
-      <BackToLink fallback="/app/nejoic" label={`Back to ${NEJOIC_NAME}`} />
-
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-soft text-sky-deep">
-          <Sparkles className="h-5 w-5" strokeWidth={1.75} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-mid">
-            Fix these · Nejoic follows them
-          </p>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
-              {NEJOIC_NAME} Settings
-            </h1>
-            <InfoBubble title="What to fix here">
-              Select one or more strategies Nejoic should evaluate. Pick how strict analysis is and
-              which timeframes. Telegram bot delivery lives under Alerts. Paper money only.
-            </InfoBubble>
-          </div>
-        </div>
-      </div>
-
-      <form onSubmit={handleSave} className="mt-8 space-y-5">
+    <form onSubmit={handleSave} className={embedded ? 'space-y-5' : 'mt-8 space-y-5'}>
         {/* 1. Strategy */}
         <section className="rounded-2xl border border-[#cfe0ee]/90 bg-white p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -154,9 +161,12 @@ export default function NejoicSettingsWorkspace() {
                 1. Strategies — turn ON / OFF what Nejoic may use
               </h2>
               <p className="mt-1 text-[12px] text-sky-ink/50">
-                Tick every strategy you want evaluated. Unticked = ignored. Nejoic picks the
+                Tap any card to toggle. Changes save instantly. Unticked = ignored. Nejoic picks the
                 strongest clear side among the ones that are ON (or waits if CE and PE conflict).
               </p>
+              {hint ? (
+                <p className="mt-1 text-[12px] font-semibold text-emerald-600">{hint}</p>
+              ) : null}
             </div>
             <p className="rounded-full bg-sky-soft px-3 py-1 text-[11px] font-semibold text-sky-deep">
               {selected.length} of {NEJOIC_STRATEGIES.length} ON
@@ -167,90 +177,44 @@ export default function NejoicSettingsWorkspace() {
             <button
               type="button"
               onClick={() =>
-                setForm((f) => ({
-                  ...f,
-                  strategyIds: NEJOIC_STRATEGIES.map((s) => s.id),
-                  strategyId: 'price_action_hhll',
-                }))
+                applyStrategyPreset(
+                  NEJOIC_STRATEGIES.map((s) => s.id),
+                  'price_action_hhll'
+                )
               }
               className="rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-sky-ink/70 ring-1 ring-[#cfe0ee] hover:bg-sky-soft/50"
             >
               Turn all ON
             </button>
-            <button
-              type="button"
-              onClick={() =>
-                setForm((f) => ({
-                  ...f,
-                  strategyIds: ['price_action_hhll', 'swing_hl'],
-                  strategyId: 'price_action_hhll',
-                }))
-              }
-              className="rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-sky-ink/70 ring-1 ring-[#cfe0ee] hover:bg-sky-soft/50"
-            >
-              Price Action only
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                setForm((f) => ({
-                  ...f,
-                  strategyIds: ['price_action_hhll'],
-                  strategyId: 'price_action_hhll',
-                }))
-              }
-              className="rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-sky-ink/70 ring-1 ring-[#cfe0ee] hover:bg-sky-soft/50"
-            >
-              Long PA only
-            </button>
+            {(Object.values(STRATEGY_QUICK_PRESETS) as { label: string; ids: CatalogStrategyId[] }[]).map(
+              (preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() =>
+                    applyStrategyPreset(
+                      preset.ids.length ? preset.ids : selected,
+                      preset.ids[0] || 'price_action_hhll'
+                    )
+                  }
+                  className="rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-sky-ink/70 ring-1 ring-[#cfe0ee] hover:bg-sky-soft/50"
+                >
+                  {preset.label}
+                </button>
+              )
+            )}
           </div>
 
-          {NEJOIC_STRATEGY_GROUPS.map((group) => {
-            const items = NEJOIC_STRATEGIES.filter((s) => s.group === group.id);
-            return (
-              <div key={group.id} className="mt-5">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-ink/45">
-                  {group.title}
-                </p>
-                <p className="mt-1 text-[12px] text-sky-ink/50">{group.hint}</p>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  {items.map((s) => {
-                    const on = selected.includes(s.id);
-                    return (
-                      <button
-                        key={s.id}
-                        type="button"
-                        onClick={() => toggleStrategy(s.id)}
-                        aria-pressed={on}
-                        className={`rounded-xl border px-3 py-3 text-left transition ${
-                          on
-                            ? 'border-sky-deep bg-sky-soft/80 ring-2 ring-sky-mid/40'
-                            : 'border-[#cfe0ee] bg-[#f8fbfd] opacity-75 hover:bg-sky-soft/40 hover:opacity-100'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="text-sm font-semibold text-sky-ink">{s.name}</p>
-                          <span
-                            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                              on
-                                ? 'bg-emerald-600 text-white'
-                                : 'bg-white text-sky-ink/40 ring-1 ring-[#cfe0ee]'
-                            }`}
-                          >
-                            {on ? 'ON · Use' : 'OFF'}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-[12px] text-sky-ink/55">{s.short}</p>
-                        <p className="mt-1.5 text-[11px] font-medium text-sky-deep">
-                          You fix: {s.whatYouFix}
-                        </p>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
+          <div className="mt-4">
+            <StrategyGroupedMulti
+              selected={selected}
+              onChangeSelected={changeSelected}
+              onBlocked={(msg) => {
+                setHint(msg);
+                window.setTimeout(() => setHint(''), 2200);
+              }}
+            />
+          </div>
         </section>
 
         {/* 2. Analysis style */}
@@ -265,13 +229,14 @@ export default function NejoicSettingsWorkspace() {
                 <button
                   key={s.id}
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
+                    markDirty();
                     setForm((f) => ({
                       ...f,
                       analysisStyle: s.id as NejoicAnalysisStyle,
                       setupStyle: styleToSetup(s.id),
-                    }))
-                  }
+                    }));
+                  }}
                   className={`rounded-xl border px-3 py-3 text-left ${
                     on
                       ? 'border-sky-deep bg-sky-soft/80 ring-2 ring-sky-mid/40'
@@ -315,12 +280,13 @@ export default function NejoicSettingsWorkspace() {
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
+                    markDirty();
                     setForm((f) => ({
                       ...f,
                       primaryTimeframe: t.id as NejoicTimeframeId,
-                    }))
-                  }
+                    }));
+                  }}
                   className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
                     on
                       ? 'bg-sky-deep text-white'
@@ -555,12 +521,92 @@ export default function NejoicSettingsWorkspace() {
               />
             </label>
           </div>
+          <p className="mt-3 text-[12px] text-sky-ink/50">
+            Paper results for {NEJOIC_NAME} trades appear under{' '}
+            <Link href="/app/paper-trading" className="font-semibold text-sky-deep hover:underline">
+              Paper Trading
+            </Link>
+            .
+          </p>
         </section>
 
-        {/* 6. Ask mode + session */}
+        {/* 6. Paper execution (Nifty exits) */}
         <section className="rounded-2xl border border-[#cfe0ee]/90 bg-white p-5">
           <h2 className="font-display text-[15px] font-semibold text-sky-ink">
-            6. Ask mode & session filters
+            6. Paper execution — SL / target / trailing (Nifty)
+          </h2>
+          <p className="mt-1 text-[12px] text-sky-ink/50">
+            Used when {NEJOIC_NAME} opens or closes paper trades. Configure once here — Paper hub only
+            picks {NEJOIC_NAME} vs Jimbo.
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <label className="block text-sm">
+              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-sky-ink/45">
+                Brokerage ₹ / lot
+              </span>
+              <input
+                type="number"
+                min={0}
+                className={inputClass}
+                value={form.brokeragePerLot}
+                onChange={(e) => setNum('brokeragePerLot', e.target.value)}
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-sky-ink/45">
+                Target (premium points)
+              </span>
+              <input
+                type="number"
+                min={1}
+                className={inputClass}
+                value={form.targetPoints}
+                onChange={(e) => setNum('targetPoints', e.target.value)}
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-sky-ink/45">
+                Stop-loss (points)
+              </span>
+              <input
+                type="number"
+                min={1}
+                className={inputClass}
+                value={form.stopLossPoints}
+                onChange={(e) => setNum('stopLossPoints', e.target.value)}
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-sky-ink/45">
+                Trailing SL (0 = off)
+              </span>
+              <input
+                type="number"
+                min={0}
+                className={inputClass}
+                value={form.trailingStopPoints}
+                onChange={(e) => setNum('trailingStopPoints', e.target.value)}
+              />
+            </label>
+            <label className="block text-sm sm:col-span-2">
+              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-sky-ink/45">
+                Activate trailing after profit (points)
+              </span>
+              <input
+                type="number"
+                min={0}
+                className={`${inputClass} max-w-xs`}
+                value={form.trailingActivatePoints}
+                onChange={(e) => setNum('trailingActivatePoints', e.target.value)}
+              />
+            </label>
+          </div>
+        </section>
+
+        {/* 7. Ask mode + session */}
+        <section className="rounded-2xl border border-[#cfe0ee]/90 bg-white p-5">
+          <h2 className="font-display text-[15px] font-semibold text-sky-ink">
+            7. Ask mode & session filters
           </h2>
           <div className="mt-4 space-y-3">
             <label className="block text-sm">
@@ -623,11 +669,11 @@ export default function NejoicSettingsWorkspace() {
             <p className="text-sm font-semibold text-sky-ink">Telegram bot delivery</p>
           </div>
           <p className="mt-1 text-[12px] text-sky-ink/55">
-            Notify on/off, instrument, timeframe, and heartbeat live under{' '}
-            <Link href="/app/alerts" className="font-semibold text-sky-deep hover:underline">
-              Alerts → Telegram
+            Telegram is separate:{' '}
+            <Link href="/app/telegram" className="font-semibold text-sky-deep hover:underline">
+              AI Agents → Telegram Bot
             </Link>
-            . Strategy maths stay here.
+            . Paper qty / SL / target are configured above in section 6.
           </p>
         </div>
 
@@ -642,6 +688,5 @@ export default function NejoicSettingsWorkspace() {
           {saved && <span className="text-sm font-semibold text-emerald-600">Saved</span>}
         </div>
       </form>
-    </div>
   );
 }

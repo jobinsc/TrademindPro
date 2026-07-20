@@ -50,3 +50,5 @@ coverage/
 .turbo/
 
 .vercel
+
+.env*

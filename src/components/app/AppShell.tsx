@@ -6,6 +6,7 @@ import AppTopBar from '@/components/app/AppTopBar';
 import AppSystemStatus from '@/components/app/AppSystemStatus';
 import NavHistoryTracker from '@/components/app/NavHistoryTracker';
 import { ChartPeekHost } from '@/components/chart/SymbolChartLink';
+import NejoicRuntimeHost from '@/components/nejoic/NejoicRuntimeHost';
 
 const COLLAPSE_KEY = 'trademindpro_sidebar_collapsed';
 
@@ -57,6 +58,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     <div className="flex min-h-dvh w-full bg-sky-soft text-sky-ink">
       <NavHistoryTracker />
       <ChartPeekHost />
+      <NejoicRuntimeHost />
       {/* Desktop sidebar — always visible from md up (not display:none) */}
       <div className="sticky top-0 z-40 hidden h-dvh shrink-0 md:flex">
         <AppSidebar

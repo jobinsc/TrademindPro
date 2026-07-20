@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Bot, Download, FileText, OctagonX, Play, Plus, RotateCcw, Save, Square, Trash2, X, Zap } from 'lucide-react';
+import { Bot, Download, FileText, OctagonX, Plus, RotateCcw, Save, Square, Trash2, X, Zap } from 'lucide-react';
 import InfoBubble from '@/components/ui/InfoBubble';
 import {
   ModuleRunButton,
@@ -236,35 +236,7 @@ export default function PaperTradingWorkspace() {
 
   const nejoicAutoOn = nejoicReady && nejoicSettings.autoTrade;
   const jimboAutoOn = jimboReady && jimboSettings.autoTrade;
-  const anyAutoOn = nejoicAutoOn || jimboAutoOn;
   const bothAutoOn = nejoicAutoOn && jimboAutoOn;
-
-  function startBothAuto() {
-    if (nejoicReady) setNejoicAuto(true);
-    if (jimboReady) setJimboAuto(true);
-    updatePaper({ paperAgent: 'both' });
-  }
-
-  function stopBothAuto() {
-    if (nejoicReady) setNejoicAuto(false);
-    if (jimboReady) setJimboAuto(false);
-  }
-
-  function startNejoicAuto() {
-    if (nejoicReady) setNejoicAuto(true);
-  }
-
-  function stopNejoicAuto() {
-    if (nejoicReady) setNejoicAuto(false);
-  }
-
-  function startJimboAuto() {
-    if (jimboReady) setJimboAuto(true);
-  }
-
-  function stopJimboAuto() {
-    if (jimboReady) setJimboAuto(false);
-  }
 
   function applyAutoSelection(start: boolean) {
     if (autoPickNejoic && nejoicReady) setNejoicAuto(start);
@@ -470,60 +442,14 @@ export default function PaperTradingWorkspace() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1 rounded-full border border-[#cfe0ee] bg-white p-1">
-            <button
-              type="button"
-              onClick={startNejoicAuto}
-              disabled={nejoicAutoOn}
-              className="rounded-full px-2.5 py-1 text-[10px] font-semibold text-sky-deep hover:bg-sky-soft disabled:opacity-40"
-            >
-              Start {NEJOIC_NAME}
-            </button>
-            <button
-              type="button"
-              onClick={stopNejoicAuto}
-              disabled={!nejoicAutoOn}
-              className="rounded-full px-2.5 py-1 text-[10px] font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-40"
-            >
-              Stop {NEJOIC_NAME}
-            </button>
-          </div>
-          <div className="flex items-center gap-1 rounded-full border border-[#cfe0ee] bg-white p-1">
-            <button
-              type="button"
-              onClick={startJimboAuto}
-              disabled={jimboAutoOn}
-              className="rounded-full px-2.5 py-1 text-[10px] font-semibold text-sky-deep hover:bg-sky-soft disabled:opacity-40"
-            >
-              Start {JIMBO_NAME}
-            </button>
-            <button
-              type="button"
-              onClick={stopJimboAuto}
-              disabled={!jimboAutoOn}
-              className="rounded-full px-2.5 py-1 text-[10px] font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-40"
-            >
-              Stop {JIMBO_NAME}
-            </button>
-          </div>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={startBothAuto}
-              disabled={bothAutoOn}
-              className="rounded-full bg-sky-deep px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-sky-ink disabled:opacity-45"
-            >
-              Start both
-            </button>
-            <button
-              type="button"
-              onClick={stopBothAuto}
-              disabled={!anyAutoOn}
-              className="rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-sky-ink/70 ring-1 ring-[#cfe0ee] hover:bg-sky-soft disabled:opacity-45"
-            >
-              Stop both
-            </button>
-          </div>
+          <ModuleRunButton variant="force" onClick={() => paperForceStop(false)}>
+            <OctagonX className="h-4 w-4" />
+            Force stop all
+          </ModuleRunButton>
+          <ModuleRunButton variant="force" onClick={() => paperForceStop(true)}>
+            <OctagonX className="h-4 w-4" />
+            Force stop + exit
+          </ModuleRunButton>
         </div>
       </div>
 
@@ -557,30 +483,6 @@ export default function PaperTradingWorkspace() {
         }
         controls={
           <>
-            <ModuleRunButton variant="start" onClick={startNejoicAuto} disabled={nejoicAutoOn}>
-              <Play className="h-4 w-4" />
-              Start {NEJOIC_NAME}
-            </ModuleRunButton>
-            <ModuleRunButton variant="stop" onClick={stopNejoicAuto} disabled={!nejoicAutoOn}>
-              <Square className="h-4 w-4" />
-              Stop {NEJOIC_NAME}
-            </ModuleRunButton>
-            <ModuleRunButton variant="start" onClick={startJimboAuto} disabled={jimboAutoOn}>
-              <Play className="h-4 w-4" />
-              Start {JIMBO_NAME}
-            </ModuleRunButton>
-            <ModuleRunButton variant="stop" onClick={stopJimboAuto} disabled={!jimboAutoOn}>
-              <Square className="h-4 w-4" />
-              Stop {JIMBO_NAME}
-            </ModuleRunButton>
-            <ModuleRunButton variant="start" onClick={startBothAuto} disabled={bothAutoOn}>
-              <Play className="h-4 w-4" />
-              Start both
-            </ModuleRunButton>
-            <ModuleRunButton variant="stop" onClick={stopBothAuto} disabled={!anyAutoOn}>
-              <Square className="h-4 w-4" />
-              Stop both
-            </ModuleRunButton>
             <ModuleRunButton variant="force" onClick={() => paperForceStop(false)}>
               <OctagonX className="h-4 w-4" />
               Force stop all

@@ -10,7 +10,7 @@ import { useJimbo } from '@/hooks/useJimbo';
 import type { ExecutionMode, PaperResultsColumns } from '@/lib/paper-trade-settings';
 import { NEJOIC_NAME } from '@/lib/nejoic';
 import { JIMBO_NAME } from '@/lib/jimbo';
-import { normalizeStrategyIds, strategyLabel } from '@/lib/nejoic-options';
+import { normalizeStrategyIds } from '@/lib/nejoic-options';
 
 const inputClass =
   'w-full rounded-xl border border-[#cfe0ee] bg-white px-3 py-2.5 text-sm text-sky-ink outline-none focus:ring-2 focus:ring-sky-mid/30';
@@ -56,24 +56,10 @@ export default function PaperTradeSettingsPanel({ embedded = false }: { embedded
     jimboSettings.strategyId
   );
   const bothAuto = nejoicSettings.autoTrade && jimboSettings.autoTrade;
-  const anyAuto = nejoicSettings.autoTrade || jimboSettings.autoTrade;
 
   function flash(msg: string) {
     setHint(msg);
     window.setTimeout(() => setHint(''), 1600);
-  }
-
-  function startBoth() {
-    setNejoicAuto(true);
-    setJimboAuto(true);
-    update({ paperAgent: 'both' });
-    flash(`${NEJOIC_NAME} + ${JIMBO_NAME} auto ON`);
-  }
-
-  function stopBoth() {
-    setNejoicAuto(false);
-    setJimboAuto(false);
-    flash('Both brains stopped');
   }
 
   function startNejoic() {
@@ -116,26 +102,7 @@ export default function PaperTradeSettingsPanel({ embedded = false }: { embedded
       ) : null}
       {hint ? <p className="mb-3 text-[12px] font-semibold text-emerald-600">{hint}</p> : null}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={startBoth}
-          disabled={bothAuto}
-          className="rounded-full bg-sky-deep px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-sky-ink disabled:cursor-not-allowed disabled:opacity-45"
-        >
-          Start both brains
-        </button>
-        <button
-          type="button"
-          onClick={stopBoth}
-          disabled={!anyAuto}
-          className="rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-sky-ink/70 ring-1 ring-[#cfe0ee] hover:bg-sky-soft disabled:cursor-not-allowed disabled:opacity-45"
-        >
-          Stop both
-        </button>
-      </div>
-
-      <p className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-sky-ink/45">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-ink/45">
         Auto brains — start or stop each one separately
       </p>
       <div className="mt-2 grid gap-3 sm:grid-cols-2">
@@ -366,7 +333,7 @@ export default function PaperTradeSettingsPanel({ embedded = false }: { embedded
             <strong>{JIMBO_NAME}</strong> auto ON · {NEJOIC_NAME} OFF
           </>
         ) : (
-          <>No auto brain running — start one or both above, or add manual trades.</>
+          <>No auto brain running — use Start on each card below, or add manual trades.</>
         )}
       </div>
 

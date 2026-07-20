@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Pause, Play, Save, Send } from 'lucide-react';
 import InfoBubble from '@/components/ui/InfoBubble';
@@ -28,6 +28,24 @@ export default function TelegramBotWorkspace() {
   const { ready, settings, update } = useTelegramBot();
   const [saved, setSaved] = useState(false);
   const [hint, setHint] = useState('');
+  const [testResult, setTestResult] = useState('');
+  const [serverStatus, setServerStatus] = useState<{
+    ok?: boolean;
+    tokenSet?: boolean;
+    chatIdsSet?: boolean;
+    message?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch('/api/telegram/status');
+        setServerStatus((await res.json()) as typeof serverStatus);
+      } catch {
+        setServerStatus({ ok: false, message: 'Could not check server config' });
+      }
+    })();
+  }, [testResult]);
 
   const selected = useMemo(
     () => normalizeStrategyIds(settings.strategyIds, settings.strategyIds[0]),
@@ -49,6 +67,34 @@ export default function TelegramBotWorkspace() {
       setHint('');
       setSaved(false);
     }, 1800);
+  }
+
+  async function sendTestMessage() {
+    setTestResult('Sending…');
+    try {
+      const headers: HeadersInit = { 'Content-Type': 'application/json' };
+      const key = process.env.NEXT_PUBLIC_TELEGRAM_NOTIFY_KEY;
+      if (key) headers['x-notify-key'] = key;
+      const res = await fetch('/api/telegram/notify', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          text: '✅ TradeMind Pro test — Telegram is working.\nIf you see this, bot token + chat id are correct.',
+        }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string; sent?: number; deduped?: boolean };
+      if (!res.ok || !data.ok) {
+        setTestResult(data.error || 'Send failed — check .env.local (see below).');
+        return;
+      }
+      setTestResult(
+        data.deduped
+          ? 'OK (duplicate skipped — wait 12s and try again).'
+          : `Sent to ${data.sent ?? 1} chat(s). Check Telegram.`
+      );
+    } catch (e) {
+      setTestResult(e instanceof Error ? e.message : 'Network error');
+    }
   }
 
   function changeSelected(ids: NejoicStrategyId[]) {
@@ -100,8 +146,8 @@ export default function TelegramBotWorkspace() {
             </InfoBubble>
           </div>
           <p className="mt-2 max-w-2xl text-[13px] text-sky-ink/55">
-            Keep the <Link href="/app/nejoic" className="font-semibold text-sky-deep hover:underline">Nejoic</Link>{' '}
-            tab open while Messages are ON so heartbeats can send.
+            Pulse runs in the background while you use any app page. Turn <strong>Messages ON</strong> below
+            after server token + chat id are set.
           </p>
         </div>
       </div>
@@ -138,6 +184,51 @@ export default function TelegramBotWorkspace() {
             </>
           )}
         </button>
+      </div>
+
+      <div
+        className={`mt-4 rounded-2xl border px-4 py-3 ${
+          serverStatus?.ok
+            ? 'border-emerald-200 bg-emerald-50/80'
+            : 'border-amber-200 bg-amber-50/80'
+        }`}
+      >
+        <p className="text-[12px] font-semibold text-sky-ink">Server delivery</p>
+        <p className="mt-1 text-[12px] text-sky-ink/70">
+          {serverStatus == null
+            ? 'Checking…'
+            : serverStatus.ok
+              ? 'Bot token + chat id configured — ready to send.'
+              : serverStatus.message ||
+                'Add TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_IDS to .env.local, then restart npm run dev.'}
+        </p>
+        {serverStatus && !serverStatus.ok ? (
+          <ul className="mt-2 list-inside list-disc text-[11px] text-sky-ink/60">
+            <li>Token: {serverStatus.tokenSet ? '✓ set' : '✗ missing'}</li>
+            <li>Chat id: {serverStatus.chatIdsSet ? '✓ set' : '✗ missing'}</li>
+          </ul>
+        ) : null}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void sendTestMessage()}
+            className="inline-flex items-center gap-2 rounded-xl bg-sky-deep px-4 py-2 text-sm font-semibold text-white hover:bg-sky-ink"
+          >
+            <Send className="h-4 w-4" />
+            Send test message
+          </button>
+          {testResult ? (
+            <span
+              className={`text-[12px] font-semibold ${
+                testResult.startsWith('Sent') || testResult.startsWith('OK')
+                  ? 'text-emerald-600'
+                  : 'text-rose-600'
+              }`}
+            >
+              {testResult}
+            </span>
+          ) : null}
+        </div>
       </div>
 
       <form onSubmit={saveAll} className="mt-6 space-y-5">

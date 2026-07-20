@@ -14,6 +14,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [ready, setReady] = useState(false);
+  const [isWide, setIsWide] = useState(true);
 
   useEffect(() => {
     try {
@@ -22,6 +23,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
       /* ignore */
     }
     setReady(true);
+  }, []);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const update = () => setIsWide(mq.matches);
+    update();
+    mq.addEventListener('change', update);
+    return () => mq.removeEventListener('change', update);
   }, []);
 
   useEffect(() => {
@@ -53,17 +62,19 @@ export default function AppShell({ children }: { children: ReactNode }) {
   }
 
   const desktopCollapsed = ready ? collapsed : false;
+  /** Phone: icon rail only. Desktop: user preference. */
+  const sidebarCollapsed = isWide ? desktopCollapsed : true;
 
   return (
     <div className="flex min-h-dvh w-full bg-sky-soft text-sky-ink">
       <NavHistoryTracker />
       <ChartPeekHost />
       <NejoicRuntimeHost />
-      {/* Desktop sidebar — always visible from md up (not display:none) */}
-      <div className="sticky top-0 z-40 hidden h-dvh shrink-0 md:flex">
+      {/* Sidebar — always visible (icon rail on phone, full on desktop) */}
+      <div className="sticky top-0 z-40 flex h-dvh shrink-0">
         <AppSidebar
-          collapsed={desktopCollapsed}
-          onToggleCollapse={toggleDesktop}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={isWide ? toggleDesktop : openMobile}
           variant="desktop"
         />
       </div>
@@ -90,8 +101,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
       <div className="flex min-h-dvh min-w-0 flex-1 flex-col">
         <AppTopBar
-          collapsed={desktopCollapsed}
-          onToggleCollapse={toggleDesktop}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={isWide ? toggleDesktop : openMobile}
           onOpenMobile={openMobile}
         />
         <AppSystemStatus />

@@ -51,9 +51,10 @@ export default function AppTopBar({
           type="button"
           onClick={onOpenMobile}
           aria-label="Open menu"
-          className="inline-flex items-center justify-center rounded-lg p-1.5 text-sky-deep transition hover:bg-white/80 md:hidden"
+          className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sky-deep transition hover:bg-white/80 md:hidden"
         >
           <Menu className="h-5 w-5" strokeWidth={2} />
+          <span className="text-[11px] font-bold">Menu</span>
         </button>
 
         <button

@@ -116,14 +116,12 @@ const navGroups: NavGroup[] = [
         href: '/app/blink',
         label: 'Blink (Scalp)',
         icon: Zap,
-        adminOnly: true,
         exact: true,
       },
       {
         href: '/app/blink/results',
         label: 'Blink Results',
         icon: Zap,
-        adminOnly: true,
         exact: true,
       },
       {

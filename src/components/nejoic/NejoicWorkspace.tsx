@@ -35,7 +35,6 @@ import { NEJOIC_NAME } from '@/lib/nejoic';
 import { formatCurrency } from '@/lib/utils';
 import FullStopBar from '@/components/trading/FullStopBar';
 import { getBrokeragePerLot } from '@/lib/brokerage';
-import { readPaperTradeSettings } from '@/lib/paper-trade-settings';
 
 function statusLabel(status: string, autoOn: boolean) {
   if (status === 'armed' || status === 'trading') return autoOn ? 'ON' : 'OFF';
@@ -68,10 +67,7 @@ export default function NejoicWorkspace() {
     updateSettings,
   } = useNejoic();
   const [prompt, setPrompt] = useState('');
-  const brokPerLot =
-    readPaperTradeSettings().brokeragePerLot ||
-    settings.brokeragePerLot ||
-    getBrokeragePerLot();
+  const brokPerLot = settings.brokeragePerLot || getBrokeragePerLot();
 
   const chartData = useMemo(() => {
     const labelMap = new Map(

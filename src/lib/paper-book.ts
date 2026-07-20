@@ -4,7 +4,6 @@
 
 import { JIMBO_NAME, type JimboSettings, type JimboTrade } from '@/lib/jimbo';
 import type { NejoicSettings, NejoicTrade } from '@/lib/nejoic';
-import type { PaperTrade } from '@/lib/paper';
 import { strategyLabel } from '@/lib/nejoic-options';
 import type { CatalogStrategyId } from '@/lib/strategy-catalog';
 import { defaultPaperAccount, paperPnL, type PaperAccount, type PaperTrade } from '@/lib/paper';

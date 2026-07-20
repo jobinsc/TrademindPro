@@ -9,6 +9,7 @@ import { runNejoicStrategy } from '@/lib/nejoic-strategy';
 import { runCatalogSignal } from '@/lib/backtest-signals';
 import { isIndiaCashSession } from '@/lib/market-desk';
 import { netAfterBrokerage, paperBrokerage, getBrokeragePerLot } from '@/lib/brokerage';
+import { roundPremium, simulatedPremiumWalk } from '@/lib/paper-exit';
 
 export const NEJOIC_NAME = 'Nejoic';
 
@@ -138,6 +139,8 @@ export type NejoicTrade = {
   instrumentKey?: string | null;
   premiumSource?: 'upstox' | 'estimate';
   expiry?: string | null;
+  /** Highest seen premium while open (paper trailing) */
+  peakPremium?: number | null;
 };
 
 export type NejoicDay = {
@@ -624,15 +627,21 @@ export function openPaperTrade(
 export function closePaperTrade(
   trade: NejoicTrade,
   settings: NejoicSettings,
-  liveExitPremium?: number | null
+  liveExitPremium?: number | null,
+  tickMs = 5_000
 ): NejoicTrade {
   let exitPremium: number;
   if (liveExitPremium != null && liveExitPremium > 0) {
-    exitPremium = Math.round(liveExitPremium * 100) / 100;
+    exitPremium = roundPremium(liveExitPremium);
   } else {
-    // Fallback only when Upstox LTP unavailable
-    const move = (Math.random() - 0.42) * 35;
-    exitPremium = Math.max(5, Math.round((trade.entryPremium + move) * 100) / 100);
+    const { ltp } = simulatedPremiumWalk(
+      trade.id,
+      trade.entryPremium,
+      new Date(trade.at).getTime(),
+      Date.now(),
+      tickMs
+    );
+    exitPremium = ltp;
   }
   const points = exitPremium - trade.entryPremium;
   const grossPnl = Math.round(points * settings.lotSize * trade.lots);
@@ -650,6 +659,7 @@ export function closePaperTrade(
     brokerage,
     pnl,
     status: 'closed',
+    peakPremium: null,
     note: `${trade.note} · Brok ₹${brokerage}`.trim(),
   };
 }

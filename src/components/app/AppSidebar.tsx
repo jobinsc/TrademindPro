@@ -31,6 +31,7 @@ import {
   Calculator,
   X,
   Send,
+  Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/components/auth/AuthProvider';
@@ -108,6 +109,20 @@ const navGroups: NavGroup[] = [
         href: '/app/jimbo',
         label: 'Jimbo (Stocks)',
         icon: LineChart,
+        adminOnly: true,
+        exact: true,
+      },
+      {
+        href: '/app/blink',
+        label: 'Blink (Scalp)',
+        icon: Zap,
+        adminOnly: true,
+        exact: true,
+      },
+      {
+        href: '/app/blink/results',
+        label: 'Blink Results',
+        icon: Zap,
         adminOnly: true,
         exact: true,
       },

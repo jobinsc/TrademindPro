@@ -22,6 +22,11 @@ import {
   type Candle,
 } from '@/lib/nejoic';
 import { looksLikePulseAsk, normalizeStrategyIds } from '@/lib/nejoic-options';
+import {
+  evaluatePaperPremiumExit,
+  paperExitLabel,
+  simulatedPremiumWalk,
+} from '@/lib/paper-exit';
 import { getUpstoxAccessToken } from '@/lib/upstox-client';
 import { setBrokeragePerLot } from '@/lib/brokerage';
 import {
@@ -31,6 +36,7 @@ import {
 } from '@/lib/telegram-bot-settings';
 
 const KEY = 'trademindpro_nejoic_v1';
+const AUTO_TICK_MS = 5_000;
 const LAST_PULSE_DECISION_KEY = 'trademindpro_nejoic_last_tg_decision';
 const LAST_PULSE_SENT_AT_KEY = 'trademindpro_nejoic_last_tg_sent';
 const LAST_PULSE_FP_KEY = 'trademindpro_nejoic_last_tg_fp';
@@ -593,41 +599,62 @@ export function useNejoic(opts?: { runtime?: boolean }) {
             const opposite =
               (open.option === 'CE' && sig.bias === 'PE' && sig.confidence >= 70) ||
               (open.option === 'PE' && sig.bias === 'CE' && sig.confidence >= 70);
-            // Soft premium stop/target (~40% against / 60% for) after min hold
             const live = await fetchLiveOptionPremium({
               spot: state.spot || open.strike,
               option: open.option,
               strike: open.strike,
               instrumentKey: open.instrumentKey,
             });
-            const ltp = live.ok ? live.ltp : null;
-            const stopPts = state.settings.stopLossPoints || 25;
-            const tgtPts = state.settings.targetPoints || 40;
-            const trailPts = state.settings.trailingStopPoints || 0;
-            const trailAct = state.settings.trailingActivatePoints || 0;
-            // Points = premium points (option LTP move)
-            const movePts = ltp != null ? ltp - open.entryPremium : 0;
-            const stopHit = ltp != null && movePts <= -stopPts;
-            const targetHit = ltp != null && movePts >= tgtPts;
-            let trailHit = false;
-            if (trailPts > 0 && ltp != null && movePts >= trailAct) {
-              // Once activated, exit if give-back from peak reaches trailPts
-              // Approximate peak as max(entry+trailAct, current) for this tick
-              const peak = Math.max(open.entryPremium + trailAct, ltp);
-              trailHit = ltp <= peak - trailPts && movePts > 0;
+            const exitPoints = {
+              stopLossPoints: state.settings.stopLossPoints || 25,
+              targetPoints: state.settings.targetPoints || 40,
+              trailingStopPoints: state.settings.trailingStopPoints || 0,
+              trailingActivatePoints: state.settings.trailingActivatePoints || 0,
+            };
+            const now = Date.now();
+            const openedAt = new Date(open.at).getTime();
+            let ltp = live.ok ? live.ltp : null;
+            let peak = open.peakPremium ?? open.entryPremium;
+            if (ltp == null) {
+              const sim = simulatedPremiumWalk(
+                open.id,
+                open.entryPremium,
+                openedAt,
+                now,
+                AUTO_TICK_MS
+              );
+              ltp = sim.ltp;
+              peak = Math.max(peak, sim.peak);
+            } else {
+              peak = Math.max(peak, ltp);
             }
+            const exit = evaluatePaperPremiumExit(
+              open.entryPremium,
+              ltp,
+              peak,
+              exitPoints
+            );
             const shouldClose =
-              age > minHoldMs && (opposite || stopHit || targetHit || trailHit);
+              age > minHoldMs && (opposite || exit.shouldClose);
 
             if (!shouldClose) {
+              const trades =
+                peak > (open.peakPremium ?? open.entryPremium)
+                  ? state.trades.map((t) =>
+                      t.id === open.id ? { ...t, peakPremium: peak } : t
+                    )
+                  : state.trades;
               localStorage.setItem(
                 KEY,
-                JSON.stringify({ ...state, signal: sig, spot: sig.niftySpot })
+                JSON.stringify({ ...state, trades, signal: sig, spot: sig.niftySpot })
               );
+              if (trades !== state.trades) setTrades(trades);
               return;
             }
 
-            const closed = closePaperTrade(open, state.settings, ltp);
+            const exitPremium =
+              exit.shouldClose && exit.exitPremium != null ? exit.exitPremium : ltp;
+            const closed = closePaperTrade(open, state.settings, exitPremium, AUTO_TICK_MS);
             const trades = state.trades.map((t) => (t.id === open.id ? closed : t));
             let status = evaluateDayStatus(state.settings, trades);
             const day = realizedToday(trades);
@@ -635,14 +662,10 @@ export function useNejoic(opts?: { runtime?: boolean }) {
               if (day >= state.settings.dailyProfitTarget) status = 'target_hit';
               if (day <= -Math.abs(state.settings.dailyMaxLoss)) status = 'stopped_loss';
             }
-            const src = live.ok ? 'Upstox LTP' : 'estimate';
-            const why = targetHit
-              ? `target +${tgtPts}pts`
-              : trailHit
-                ? `trailing ${trailPts}pts`
-                : stopHit
-                  ? `stop -${stopPts}pts`
-                  : 'signal flip';
+            const src = live.ok ? 'Upstox LTP' : 'paper sim';
+            const why = exit.shouldClose && exit.reason
+              ? paperExitLabel(exit.reason, exitPoints)
+              : 'signal flip';
             const next: NejoicState = {
               ...state,
               trades,
@@ -763,7 +786,7 @@ export function useNejoic(opts?: { runtime?: boolean }) {
           autoRef.current = false;
         }
       })();
-    }, 5000);
+    }, AUTO_TICK_MS);
 
     return () => window.clearInterval(id);
   }, [runRuntime, ready, settings.autoTrade, settings.status]);

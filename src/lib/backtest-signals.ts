@@ -225,14 +225,18 @@ export function runCatalogSignal(
     strategyId === 'breakout' ||
     strategyId === 'orb' ||
     strategyId === 'vwap_reclaim' ||
-    strategyId === 'macd_cross'
+    strategyId === 'macd_cross' ||
+    strategyId === 'cci_zero' ||
+    strategyId === 'hhll_lonesome'
   ) {
     return runNejoicStrategy(strategyId, candles, DEFAULT_OPTS);
   }
 
-  if (strategyId === 'price_action_hhll' || strategyId === 'swing_hl') {
-    const pa = runPriceAction(candles, { leftBars: 3, rightBars: 3 });
-    if (strategyId === 'price_action_hhll') {
+  if (strategyId === 'price_action_hhll' || strategyId === 'swing_hl' || strategyId === 'hhll_lonesome') {
+    const lb = strategyId === 'hhll_lonesome' ? 5 : 3;
+    const rb = strategyId === 'hhll_lonesome' ? 5 : 3;
+    const pa = runPriceAction(candles, { leftBars: lb, rightBars: rb });
+    if (strategyId === 'price_action_hhll' || strategyId === 'hhll_lonesome') {
       if (pa.bias === 'CE') {
         return {
           bias: 'CE',

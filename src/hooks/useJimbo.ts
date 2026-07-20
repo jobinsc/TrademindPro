@@ -18,8 +18,14 @@ import {
   type JimboTrade,
 } from '@/lib/jimbo';
 import { normalizeStrategyIds } from '@/lib/nejoic-options';
+import {
+  evaluatePaperPremiumExit,
+  paperExitLabel,
+  simulatedPremiumWalk,
+} from '@/lib/paper-exit';
 
 const KEY = 'trademindpro_jimbo_v1';
+const AUTO_TICK_MS = 12_000;
 
 function empty(): JimboState {
   return {
@@ -238,7 +244,7 @@ export function useJimbo() {
     const state = snapshot();
     const open = state.trades.find((t) => t.status === 'open');
     if (!open) return;
-    const closed = closeJimboPaper(open);
+    const closed = closeJimboPaper(open, null, AUTO_TICK_MS);
     const trades = state.trades.map((t) => (t.id === open.id ? closed : t));
     const pnl = realizedToday(trades);
     let status: JimboSettings['status'] = 'scanning';
@@ -268,25 +274,58 @@ export function useJimbo() {
       if (!state.settings.autoTrade) return;
       if (state.trades.some((t) => t.status === 'open')) {
         const open = state.trades.find((t) => t.status === 'open');
-        if (open && Date.now() - new Date(open.at).getTime() > 20_000) {
-          const closed = closeJimboPaper(open);
-          const trades = state.trades.map((t) => (t.id === open.id ? closed : t));
-          const next = {
-            ...state,
-            trades,
-            events: [
-              ...state.events,
-              {
-                id: crypto.randomUUID(),
-                at: new Date().toISOString(),
-                text: `Auto-closed ${closed.symbol} · ₹${closed.pnl}`,
-              },
-            ].slice(-80),
-          };
-          localStorage.setItem(KEY, JSON.stringify(next));
-          setTrades(next.trades);
-          setEvents(next.events);
+        if (!open) return;
+        const now = Date.now();
+        const openedAt = new Date(open.at).getTime();
+        const { ltp, peak: simPeak } = simulatedPremiumWalk(
+          open.id,
+          open.entryPremium,
+          openedAt,
+          now,
+          AUTO_TICK_MS
+        );
+        const peak = Math.max(open.peakPremium ?? open.entryPremium, simPeak, ltp);
+        const exitPoints = {
+          stopLossPoints: state.settings.stopLossPoints || 25,
+          targetPoints: state.settings.targetPoints || 40,
+          trailingStopPoints: state.settings.trailingStopPoints || 0,
+          trailingActivatePoints: state.settings.trailingActivatePoints || 0,
+        };
+        const exit = evaluatePaperPremiumExit(
+          open.entryPremium,
+          ltp,
+          peak,
+          exitPoints
+        );
+        if (!exit.shouldClose || exit.exitPremium == null) {
+          if (peak > (open.peakPremium ?? open.entryPremium)) {
+            const trades = state.trades.map((t) =>
+              t.id === open.id ? { ...t, peakPremium: peak } : t
+            );
+            const next = { ...state, trades };
+            localStorage.setItem(KEY, JSON.stringify(next));
+            setTrades(next.trades);
+          }
+          return;
         }
+        const closed = closeJimboPaper(open, exit.exitPremium, AUTO_TICK_MS);
+        const trades = state.trades.map((t) => (t.id === open.id ? closed : t));
+        const why = exit.reason ? paperExitLabel(exit.reason, exitPoints) : 'exit';
+        const next = {
+          ...state,
+          trades,
+          events: [
+            ...state.events,
+            {
+              id: crypto.randomUUID(),
+              at: new Date().toISOString(),
+              text: `Auto-closed ${closed.symbol} (${why}) · ₹${closed.pnl}`,
+            },
+          ].slice(-80),
+        };
+        localStorage.setItem(KEY, JSON.stringify(next));
+        setTrades(next.trades);
+        setEvents(next.events);
         return;
       }
       const result = scanJimboUniverse(state.settings);
@@ -319,7 +358,7 @@ export function useJimbo() {
       setSignals(next.signals);
       setSettings(next.settings);
       setEvents(next.events);
-    }, 12_000);
+    }, AUTO_TICK_MS);
     return () => window.clearInterval(id);
   }, [ready, settings.autoTrade]);
 

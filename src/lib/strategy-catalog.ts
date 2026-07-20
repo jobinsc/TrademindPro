@@ -58,6 +58,7 @@ export type CatalogStrategyId =
   | 'macd_hist_flip'
   | 'cci_zero'
   | 'williams_r'
+  | 'hhll_lonesome'
   | 'bollinger_bounce'
   | 'bollinger_squeeze'
   | 'donchian_break'
@@ -152,6 +153,20 @@ export const POPULAR_STRATEGIES: CatalogStrategy[] = [
     exitRule: 'Exit on LH / LL or opposite swing',
     stopLoss: 'Below last HL',
     target: '1.5R or next resistance',
+    market: 'NIFTY',
+  },
+  {
+    id: 'hhll_lonesome',
+    name: 'HH/LL · Lonesome (5/5 pivots)',
+    short: 'TradingView HH/HL/LH/LL with S/R trend — LonesomeThecolor.blue port.',
+    group: 'price_action',
+    defaultTimeframe: '15m',
+    executable: true,
+    nejoic: true,
+    entryRule: 'HL → CE · LH → PE · trend from S/R breaks (lb=5, rb=5)',
+    exitRule: 'Opposite structure label or S/R break',
+    stopLoss: 'Beyond last HL/LH pivot',
+    target: '1.5R or next S/R',
     market: 'NIFTY',
   },
   {

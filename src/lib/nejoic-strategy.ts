@@ -1,5 +1,7 @@
 import type { Candle, OptionBias } from '@/lib/nejoic';
 import type { NejoicStrategyId } from '@/lib/nejoic-options';
+import { computeCci, detectZeroCross } from '@/lib/cci';
+import { runPriceAction } from '@/lib/price-action';
 
 function ema(values: number[], period: number): number[] {
   const out: number[] = [];
@@ -281,6 +283,61 @@ export function runNejoicStrategy(
       setup: bull ? 'MACD_BULL_WAIT' : 'MACD_BEAR_WAIT',
       confidence: 43,
       reason: `MACD ${macd[i].toFixed(1)} vs signal ${signal[i].toFixed(1)} — no fresh cross.`,
+    };
+  }
+
+  if (strategy === 'cci_zero') {
+    const period = Math.max(5, opts.rsiPeriod || 20);
+    const cciSeries = computeCci(candles, period);
+    const cross = detectZeroCross(cciSeries, 4);
+    const curr = cciSeries[cciSeries.length - 1];
+    if (cross?.direction === 'up_through_zero') {
+      return {
+        bias: 'CE',
+        setup: 'CCI_ZERO_UP',
+        confidence: 74,
+        reason: `CCI(${period}) crossed above 0.`,
+      };
+    }
+    if (cross?.direction === 'down_through_zero') {
+      return {
+        bias: 'PE',
+        setup: 'CCI_ZERO_DN',
+        confidence: 74,
+        reason: `CCI(${period}) crossed below 0.`,
+      };
+    }
+    return {
+      bias: 'FLAT',
+      setup: 'CCI_WAIT',
+      confidence: 42,
+      reason: `CCI(${period}) ${curr?.toFixed(1) ?? '—'} — wait for zero cross.`,
+    };
+  }
+
+  if (strategy === 'hhll_lonesome') {
+    const pa = runPriceAction(candles, { leftBars: 5, rightBars: 5 });
+    if (pa.bias === 'CE') {
+      return {
+        bias: 'CE',
+        setup: pa.setup,
+        confidence: pa.confidence,
+        reason: pa.entryHint,
+      };
+    }
+    if (pa.bias === 'PE') {
+      return {
+        bias: 'PE',
+        setup: pa.setup,
+        confidence: pa.confidence,
+        reason: pa.entryHint,
+      };
+    }
+    return {
+      bias: 'FLAT',
+      setup: pa.setup,
+      confidence: pa.confidence,
+      reason: pa.entryHint,
     };
   }
 

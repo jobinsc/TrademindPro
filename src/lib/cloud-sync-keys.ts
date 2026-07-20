@@ -7,6 +7,7 @@ export const CLOUD_SYNC_KEYS = [
   'trademindpro_nejoic_v1',
   'trademindpro_nejoic_last_tg_decision',
   'trademindpro_jimbo_v1',
+  'trademindpro_blink_v1',
   'trademindpro_scan_settings_v2',
   'trademindpro_scanner_module_v1',
   'trademindpro_scan_history_v1',

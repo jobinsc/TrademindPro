@@ -75,7 +75,8 @@ create policy "profiles_delete_admin"
   on public.profiles for delete
   using (public.is_admin() and id <> auth.uid());
 
--- user_kv policies
+-- Synced app keys include: nejoic, jimbo, blink (trademindpro_blink_v1), trades, paper, etc.
+-- See src/lib/cloud-sync-keys.ts for the full allowlist.
 drop policy if exists "user_kv_select_own" on public.user_kv;
 create policy "user_kv_select_own"
   on public.user_kv for select

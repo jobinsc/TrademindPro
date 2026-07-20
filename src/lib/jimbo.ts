@@ -16,6 +16,7 @@ import type {
   NejoicStrategyId,
   NejoicTimeframeId,
 } from '@/lib/nejoic-options';
+import { roundPremium, simulatedPremiumWalk } from '@/lib/paper-exit';
 import { styleToSetup } from '@/lib/nejoic';
 
 export { styleToSetup };
@@ -148,6 +149,8 @@ export type JimboTrade = {
   pnl: number | null;
   status: 'open' | 'closed';
   note: string;
+  /** Highest seen premium while open (paper trailing) */
+  peakPremium?: number | null;
 };
 
 export type JimboChat = {
@@ -440,17 +443,31 @@ export function openJimboPaper(
   };
 }
 
-export function closeJimboPaper(trade: JimboTrade): JimboTrade {
-  const move = (Math.random() - 0.42) * (trade.entryPremium * 0.35);
-  const exitPremium = Math.max(1, Math.round((trade.entryPremium + move) * 100) / 100);
-  const points = exitPremium - trade.entryPremium;
+export function closeJimboPaper(
+  trade: JimboTrade,
+  exitPremium?: number | null,
+  tickMs = 12_000
+): JimboTrade {
+  let finalExit = exitPremium;
+  if (finalExit == null || finalExit <= 0) {
+    const { ltp } = simulatedPremiumWalk(
+      trade.id,
+      trade.entryPremium,
+      new Date(trade.at).getTime(),
+      Date.now(),
+      tickMs
+    );
+    finalExit = ltp;
+  }
+  const points = roundPremium(finalExit) - trade.entryPremium;
   const pnl = Math.round(points * trade.lotSize * trade.lots);
   return {
     ...trade,
-    exitPremium,
+    exitPremium: roundPremium(finalExit),
     exitAt: new Date().toISOString(),
     pnl,
     status: 'closed',
+    peakPremium: null,
   };
 }
 

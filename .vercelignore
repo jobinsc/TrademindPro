@@ -1,0 +1,8 @@
+.data/
+.env*
+.next/
+.next-build/
+.vercel/
+node_modules/
+*.tsbuildinfo
+scripts/.pa-live-last.json

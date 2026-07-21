@@ -3,4 +3,7 @@
  * Do NOT kill port 3000 — that was stopping the live `npm run dev` server
  * whenever anything ran `next build` (agents, CI helpers, accidental builds).
  */
-console.log('[prebuild] Using separate .next-build — leaving port 3000 / `npm run dev` alone.');
+const distDir = process.env.VERCEL ? '.next' : '.next-build';
+console.log(
+  `[prebuild] Building into ${distDir} — leaving port 3000 / \`npm run dev\` alone.`
+);

@@ -7,13 +7,14 @@ import { join } from 'path';
 
 const root = process.cwd();
 const nextCli = join(root, 'node_modules', 'next', 'dist', 'bin', 'next');
+const distDir = process.env.VERCEL ? '.next' : '.next-build';
 
 const child = spawn(process.execPath, [nextCli, 'build'], {
   cwd: root,
   stdio: 'inherit',
   env: {
     ...process.env,
-    NEXT_DIST_DIR: '.next-build',
+    NEXT_DIST_DIR: distDir,
   },
 });
 

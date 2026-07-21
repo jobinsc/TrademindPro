@@ -3,9 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "node scripts/dev.mjs",
+    "dev:window": "scripts\\dev-window.cmd",
+    "dev:webpack": "node scripts/dev.mjs --webpack",
+    "dev:clean": "node scripts/dev.mjs --clean",
+    "prebuild": "node scripts/prebuild.mjs",
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/start.mjs",
     "lint": "next lint"
   },
   "dependencies": {

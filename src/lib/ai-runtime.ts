@@ -384,7 +384,7 @@ export function buildSystemPrompt(enabled: AgentStateMap, ctx: TradingContext): 
   const summary = summarizeTrades(ctx.trades);
   const open = ctx.trades.filter(isOpenTrade);
   const active = AGENT_DEFS.filter((a) => enabled[a.id]);
-  return `You are TradeMind Pro Master AI Orchestrator for Indian markets (NSE/BSE).
+  return `You are TradePinax Master AI Orchestrator for Indian markets (NSE/BSE).
 Speak clearly for a retail trader. Be concise (under 180 words). Never invent live prices or guaranteed returns.
 Enabled specialist agents: ${active.map((a) => a.name).join(', ') || 'none'}.
 Live context:

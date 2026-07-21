@@ -19,6 +19,14 @@ export type BlinkStrategyEntry = {
 /** All strategies Blink can run in live + backtest */
 export const BLINK_STRATEGY_ENTRIES = [
   {
+    id: 'nifty_pa_3m',
+    catalogId: 'hhll_lonesome',
+    name: 'Nifty PA Profile (3m)',
+    desc: 'Nifty index 3m — UP / DOWN / SIDEWAYS price action → CE / PE / FLAT.',
+    group: 'Combo',
+    customLive: true,
+  },
+  {
     id: 'cci_hhll_combo',
     catalogId: 'hhll_lonesome',
     name: 'CCI + HH/LL (recommended)',
@@ -52,7 +60,7 @@ export const BLINK_STRATEGY_ENTRIES = [
     id: 'orb',
     catalogId: 'orb',
     name: 'Opening range break (ORB)',
-    desc: 'First 15 min range break — classic open drive.',
+    desc: 'First N min range: close ABOVE high → CE, SL below range low. First break only.',
     group: 'Intraday',
   },
   {

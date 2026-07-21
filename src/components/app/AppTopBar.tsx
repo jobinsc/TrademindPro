@@ -10,6 +10,7 @@ import {
   PanelLeftClose,
   PanelLeft,
 } from 'lucide-react';
+import TradePinaxLogo from '@/components/app/TradePinaxLogo';
 import { useChartPeekEnabled } from '@/hooks/useChartPeekEnabled';
 import { cn } from '@/lib/utils';
 
@@ -47,6 +48,9 @@ export default function AppTopBar({
   return (
     <header className="sticky top-0 z-30 flex h-11 shrink-0 items-center justify-between gap-3 border-b border-[#c5dcec] bg-[#e3f1f9]/95 px-3 backdrop-blur-sm md:px-5">
       <div className="flex items-center gap-2">
+        <Link href="/app" aria-label="TradePinax dashboard" className="md:hidden">
+          <TradePinaxLogo variant="mark" height={26} priority />
+        </Link>
         <button
           type="button"
           onClick={onOpenMobile}

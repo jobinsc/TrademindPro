@@ -3,7 +3,9 @@
 import { useState } from 'react';
 import { FlaskConical } from 'lucide-react';
 import { useBlink } from '@/hooks/useBlink';
-import { BLINK_NAME, BLINK_STRATEGY_MODES } from '@/lib/blink';
+import { BLINK_NAME } from '@/lib/blink';
+import { blinkStrategyComboLabel } from '@/lib/blink-multi-strategy';
+import { blinkUnderlyingLabel, blinkTradeQty } from '@/lib/blink-universe';
 import type { BlinkUserBacktestReport } from '@/lib/blink-backtest-report';
 
 type BacktestResponse = {
@@ -24,8 +26,9 @@ export function BlinkTradingLabPanel() {
   const [report, setReport] = useState<BlinkUserBacktestReport | null>(null);
   const [range, setRange] = useState<{ from: string; to: string } | null>(null);
 
-  const strategyName =
-    BLINK_STRATEGY_MODES.find((m) => m.id === settings.strategyMode)?.name ?? settings.strategyMode;
+  const strategyName = blinkStrategyComboLabel(settings);
+  const underlyingLabel = blinkUnderlyingLabel(settings.symbol || 'NIFTY');
+  const tradeQty = blinkTradeQty(settings.symbol || 'NIFTY', settings.maxLotsPerTrade);
 
   async function runBacktest() {
     setRunning(true);
@@ -39,7 +42,10 @@ export function BlinkTradingLabPanel() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          symbol: settings.symbol || 'NIFTY',
           strategyMode: settings.strategyMode,
+          strategyMode2: settings.strategyMode2 ?? 'none',
+          strategyCombine: settings.strategyCombine ?? 'all',
           stopLossPoints: settings.stopLossPoints,
           targetPoints: settings.targetPoints,
           minConfidence: settings.minConfidence,
@@ -54,6 +60,15 @@ export function BlinkTradingLabPanel() {
           strikeMoneyness: settings.strikeMoneyness,
           chartTimeframe: settings.chartTimeframe,
           lookbackDays: 30,
+          emaFast: settings.emaFast,
+          emaSlow: settings.emaSlow,
+          rsiPeriod: settings.rsiPeriod,
+          cciPeriod: settings.cciPeriod,
+          cciOversold: settings.cciOversold,
+          cciOverbought: settings.cciOverbought,
+          paLeftBars: settings.paLeftBars,
+          paRightBars: settings.paRightBars,
+          orbMinutes: settings.orbMinutes ?? 5,
         }),
       });
       const data = (await res.json()) as BacktestResponse;
@@ -106,6 +121,9 @@ export function BlinkTradingLabPanel() {
         <p className="font-semibold text-sky-ink">What will be tested (from your settings)</p>
         <ul className="mt-2 grid gap-1 sm:grid-cols-2">
           <li>
+            Underlying: <strong>{underlyingLabel}</strong>
+          </li>
+          <li>
             Strategy: <strong>{strategyName}</strong>
           </li>
           <li>
@@ -127,12 +145,23 @@ export function BlinkTradingLabPanel() {
             </strong>
           </li>
           <li>
-            Max trades/day: <strong>{settings.maxTradesPerDay}</strong> · Lots:{' '}
-            <strong>{settings.maxLotsPerTrade}</strong>
+            Qty / trade:{' '}
+            <strong>
+              {tradeQty} units ({settings.maxLotsPerTrade} lot × {settings.lotSize})
+            </strong>
+          </li>
+          <li>
+            Max trades/day: <strong>{settings.maxTradesPerDay}</strong>
           </li>
         </ul>
         <p className="mt-2 text-[11px] text-sky-ink/45">
           Change anything above in Scalp settings, click Save, then run backtest again.
+          {(settings.chartTimeframe === '1m' || settings.chartTimeframe === '3m') && (
+            <span className="block mt-1 text-amber-700/80">
+              {settings.chartTimeframe} data is limited to ~7–10 days on Yahoo — use 5m or 15m for
+              longer stock backtests.
+            </span>
+          )}
         </p>
       </div>
 

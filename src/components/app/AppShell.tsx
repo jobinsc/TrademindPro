@@ -14,7 +14,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [ready, setReady] = useState(false);
-  const [isWide, setIsWide] = useState(true);
 
   useEffect(() => {
     try {
@@ -23,14 +22,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
       /* ignore */
     }
     setReady(true);
-  }, []);
-
-  useEffect(() => {
-    const mq = window.matchMedia('(min-width: 768px)');
-    const update = () => setIsWide(mq.matches);
-    update();
-    mq.addEventListener('change', update);
-    return () => mq.removeEventListener('change', update);
   }, []);
 
   useEffect(() => {
@@ -62,24 +53,22 @@ export default function AppShell({ children }: { children: ReactNode }) {
   }
 
   const desktopCollapsed = ready ? collapsed : false;
-  /** Phone: icon rail only. Desktop: user preference. */
-  const sidebarCollapsed = isWide ? desktopCollapsed : true;
 
   return (
     <div className="flex min-h-dvh w-full bg-sky-soft text-sky-ink">
       <NavHistoryTracker />
       <ChartPeekHost />
       <NejoicRuntimeHost />
-      {/* Sidebar — always visible (icon rail on phone, full on desktop) */}
-      <div className="sticky top-0 z-40 flex h-dvh shrink-0">
+      {/* Desktop sidebar — full or icon rail from md up */}
+      <div className="sticky top-0 z-40 hidden h-dvh min-h-0 shrink-0 md:flex">
         <AppSidebar
-          collapsed={sidebarCollapsed}
-          onToggleCollapse={isWide ? toggleDesktop : openMobile}
+          collapsed={desktopCollapsed}
+          onToggleCollapse={toggleDesktop}
           variant="desktop"
         />
       </div>
 
-      {/* Mobile drawer */}
+      {/* Mobile drawer — tap Menu in top bar */}
       {mobileOpen && (
         <div className="fixed inset-0 z-[60] md:hidden">
           <button
@@ -101,8 +90,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
       <div className="flex min-h-dvh min-w-0 flex-1 flex-col">
         <AppTopBar
-          collapsed={sidebarCollapsed}
-          onToggleCollapse={isWide ? toggleDesktop : openMobile}
+          collapsed={desktopCollapsed}
+          onToggleCollapse={toggleDesktop}
           onOpenMobile={openMobile}
         />
         <AppSystemStatus />

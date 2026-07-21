@@ -28,6 +28,8 @@ const TUNABLE_KEYS = new Set<keyof BlinkSettings>([
   'maxLotsPerTrade',
   'minConfidence',
   'strategyMode',
+  'strategyMode2',
+  'strategyCombine',
   'emaFast',
   'emaSlow',
   'rsiPeriod',
@@ -36,6 +38,7 @@ const TUNABLE_KEYS = new Set<keyof BlinkSettings>([
   'cciOverbought',
   'paLeftBars',
   'paRightBars',
+  'orbMinutes',
   'targetPoints',
   'stopLossPoints',
   'trailingStopPoints',
@@ -69,6 +72,17 @@ export function clampBlinkPatch(patch: Partial<BlinkSettings>): Partial<BlinkSet
       out.strategyMode = patch.strategyMode;
     }
   }
+  if (patch.strategyMode2 != null) {
+    const v = String(patch.strategyMode2);
+    if (v === 'none' || v === '') {
+      out.strategyMode2 = 'none';
+    } else if (isBlinkStrategyMode(v)) {
+      out.strategyMode2 = v;
+    }
+  }
+  if (patch.strategyCombine != null) {
+    out.strategyCombine = patch.strategyCombine === 'any' ? 'any' : 'all';
+  }
   if (patch.cciPeriod != null) {
     out.cciPeriod = Math.max(5, Math.min(50, Number(patch.cciPeriod) || 20));
   }
@@ -83,6 +97,9 @@ export function clampBlinkPatch(patch: Partial<BlinkSettings>): Partial<BlinkSet
   }
   if (patch.paRightBars != null) {
     out.paRightBars = Math.max(1, Math.min(15, Number(patch.paRightBars) || 5));
+  }
+  if (patch.orbMinutes != null) {
+    out.orbMinutes = Math.max(5, Math.min(60, Number(patch.orbMinutes) || 5));
   }
   if (patch.emaFast != null) out.emaFast = Math.max(3, Number(patch.emaFast) || 9);
   if (patch.emaSlow != null) out.emaSlow = Math.max(5, Number(patch.emaSlow) || 21);
@@ -151,7 +168,7 @@ export function buildBlinkTuneSystemPrompt(input: BlinkTuneInput): string {
   const s = input.settings;
 
   return [
-    `You are ${BLINK_NAME}, a Nifty options scalping coach inside TradeMind Pro.`,
+    `You are ${BLINK_NAME}, a Nifty options scalping coach inside TradePinax.`,
     'Paper mode only — never claim live orders were placed.',
     'Help Jobin describe, debug, and tune the scalp strategy in plain English.',
     'When the user wants setting changes, include a JSON patch with only changed fields.',

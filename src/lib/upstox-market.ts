@@ -12,6 +12,9 @@ export type UpstoxQuote = {
   changePct: number;
   volume: number;
   averagePrice: number;
+  bestBid?: number;
+  bestAsk?: number;
+  spread?: number;
 };
 
 type QuotePayload = {
@@ -22,7 +25,10 @@ type QuotePayload = {
   net_change?: number;
   volume?: number;
   average_price?: number;
-  depth?: unknown;
+  depth?: {
+    buy?: Array<{ price?: number }>;
+    sell?: Array<{ price?: number }>;
+  };
 };
 
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -40,6 +46,8 @@ function normalizeQuote(raw: QuotePayload, fallbackKey: string): UpstoxQuote | n
   const close = Number(raw.ohlc?.close ?? last);
   const change = Number(raw.net_change ?? last - close);
   const changePct = close > 0 ? (change / close) * 100 : 0;
+  const bestBid = Number(raw.depth?.buy?.[0]?.price ?? 0);
+  const bestAsk = Number(raw.depth?.sell?.[0]?.price ?? 0);
   const symbol = String(raw.symbol || '')
     .replace(/^(NSE_EQ|BSE_EQ):/i, '')
     .trim()
@@ -57,6 +65,12 @@ function normalizeQuote(raw: QuotePayload, fallbackKey: string): UpstoxQuote | n
     changePct,
     volume: Number(raw.volume ?? 0),
     averagePrice: Number(raw.average_price ?? last),
+    bestBid: bestBid > 0 ? bestBid : undefined,
+    bestAsk: bestAsk > 0 ? bestAsk : undefined,
+    spread:
+      bestBid > 0 && bestAsk >= bestBid
+        ? Number((bestAsk - bestBid).toFixed(2))
+        : undefined,
   };
 }
 

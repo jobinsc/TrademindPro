@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nifty 1m vs 3m Price-Only Report</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #eef3f7;
+      color: #17324a;
+      font-family: Arial, sans-serif;
+      line-height: 1.45;
+    }
+    main {
+      width: min(1080px, calc(100% - 32px));
+      margin: 24px auto;
+      background: white;
+      padding: 32px;
+      border: 1px solid #d8e2ea;
+    }
+    h1 { margin: 0 0 6px; font-size: 26px; }
+    h2 { margin: 28px 0 10px; font-size: 19px; }
+    p { margin: 6px 0; }
+    .muted { color: #60788a; font-size: 13px; }
+    .decision {
+      margin: 22px 0;
+      padding: 16px;
+      background: #edf9f2;
+      border-left: 5px solid #16875b;
+    }
+    .warning {
+      margin: 18px 0;
+      padding: 14px;
+      background: #fff7e8;
+      border-left: 5px solid #c47a12;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin: 18px 0;
+    }
+    .stat {
+      border: 1px solid #d8e2ea;
+      padding: 12px;
+    }
+    .stat strong { display: block; font-size: 22px; }
+    .stat span { color: #60788a; font-size: 12px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    th, td {
+      border: 1px solid #d8e2ea;
+      padding: 7px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #eef4f8; }
+    tr:nth-child(even) td { background: #fafcfd; }
+    button {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      border: 0;
+      border-radius: 8px;
+      padding: 12px 18px;
+      background: #155b8f;
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    ol { padding-left: 20px; }
+    @media (max-width: 760px) {
+      main { width: 100%; margin: 0; padding: 18px; }
+      .stats { grid-template-columns: repeat(2, 1fr); }
+      table { font-size: 10px; }
+    }
+    @media print {
+      @page { size: A4 landscape; margin: 10mm; }
+      body { background: white; }
+      main { width: 100%; margin: 0; padding: 0; border: 0; }
+      button { display: none; }
+      h2 { break-after: avoid; }
+      table { break-inside: auto; }
+      tr { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Nifty Price-Only Study: 1-Minute vs 3-Minute</h1>
+    <p class="muted">TradingView NSE:NIFTY · 1–21 July 2026 · No indicators · Sessions reset daily · Forced flat at 3:14 PM IST</p>
+
+    <section class="decision">
+      <strong>Decision</strong>
+      <p>Use completed 3-minute candles to understand the market direction and structure. Use 1-minute candles to confirm the entry. Use live Nifty and ATM option quotes for execution. Do not trade from the 3-minute chart alone.</p>
+    </section>
+
+    <section class="stats">
+      <div class="stat"><strong>229 / 229</strong><span>30-point swings: 1m / 3m</span></div>
+      <div class="stat"><strong>14 / 15</strong><span>Largest-move direction agreed</span></div>
+      <div class="stat"><strong>8 / 15</strong><span>Exact daily swing count agreed</span></div>
+      <div class="stat"><strong>96 vs 67</strong><span>Same-candle 30-point moves: 3m vs 1m</span></div>
+    </section>
+
+    <section class="warning">
+      <strong>Important limitation</strong>
+      <p>The 3-minute chart looks cleaner, but it hides the order of the three internal 1-minute candles. On volatile days it can merge movements, remove movements or change their measured size.</p>
+    </section>
+
+    <h2>Date-by-date comparison</h2>
+    <table>
+      <thead>
+        <tr><th>Date</th><th>1m moves</th><th>3m moves</th><th>Largest 1m</th><th>Largest 3m</th><th>Simple conclusion</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>01 Jul 2026</td><td>18</td><td>19</td><td>UP 101.3</td><td>UP 101.3</td><td>Broad picture agrees; 3m added one turn.</td></tr>
+        <tr><td>02 Jul 2026</td><td>7</td><td>7</td><td>UP 127.0</td><td>UP 127.0</td><td>Full agreement; cleaner bullish day.</td></tr>
+        <tr><td>03 Jul 2026</td><td>8</td><td>8</td><td>DOWN 121.0</td><td>DOWN 121.0</td><td>Full agreement; cleaner bearish day.</td></tr>
+        <tr><td>06 Jul 2026</td><td>3</td><td>3</td><td>UP 171.6</td><td>UP 171.6</td><td>Full agreement; strongest clean trend day.</td></tr>
+        <tr><td>07 Jul 2026</td><td>12</td><td>12</td><td>DOWN 84.9</td><td>DOWN 84.9</td><td>Full agreement despite reversals.</td></tr>
+        <tr><td>08 Jul 2026</td><td>35</td><td>31</td><td>DOWN 269.4</td><td>DOWN 201.1</td><td>3m hid four turns and 68.3 points of the largest path.</td></tr>
+        <tr><td>09 Jul 2026</td><td>35</td><td>36</td><td>DOWN 107.5</td><td>DOWN 123.5</td><td>Whipsaw remained; 3m overstated the largest leg.</td></tr>
+        <tr><td>10 Jul 2026</td><td>11</td><td>11</td><td>DOWN 74.0</td><td>DOWN 74.0</td><td>Full agreement.</td></tr>
+        <tr><td>13 Jul 2026</td><td>12</td><td>18</td><td>UP 128.6</td><td>UP 107.2</td><td>Direction agreed, but 3m created six extra turns.</td></tr>
+        <tr><td>14 Jul 2026</td><td>19</td><td>19</td><td>DOWN 94.6</td><td>UP 106.5</td><td>3m changed the largest movement's direction.</td></tr>
+        <tr><td>15 Jul 2026</td><td>23</td><td>19</td><td>DOWN 118.1</td><td>DOWN 178.4</td><td>3m removed four turns and overstated the fall by 60.3 points.</td></tr>
+        <tr><td>16 Jul 2026</td><td>12</td><td>12</td><td>DOWN 111.8</td><td>DOWN 111.8</td><td>Full agreement.</td></tr>
+        <tr><td>17 Jul 2026</td><td>11</td><td>13</td><td>UP 147.9</td><td>UP 153.8</td><td>Bullish story agreed; 3m added two turns.</td></tr>
+        <tr><td>20 Jul 2026</td><td>10</td><td>10</td><td>UP 112.4</td><td>UP 112.4</td><td>Full agreement, but the opening candle hides event order.</td></tr>
+        <tr><td>21 Jul 2026</td><td>13</td><td>11</td><td>DOWN 92.2</td><td>DOWN 92.2</td><td>Direction agreed; 3m removed two smaller reversals.</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Recommended next workflow</h2>
+    <ol>
+      <li>Completed 3-minute candles: determine bullish, bearish or two-sided market story.</li>
+      <li>Completed 1-minute candles: confirm breakout, reclaim, rejection or pullback entry.</li>
+      <li>Live Nifty and ATM option quotes: verify spread and whether 5–7 option points remain capturable.</li>
+      <li>No new entries after 2:30 PM. Stop analysis and force flat at 3:14 PM.</li>
+    </ol>
+
+    <h2>More data needed</h2>
+    <p>Provide another two to three months of TradingView Nifty 1-minute OHLC. Separate 3-minute exports are unnecessary because 3-minute candles can be built from the 1-minute data. Historical ATM CE/PE one-minute data would be the best next dataset.</p>
+  </main>
+
+  <button type="button" onclick="window.print()">Save as PDF</button>
+</body>
+</html>

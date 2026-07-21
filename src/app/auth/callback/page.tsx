@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import TradePinaxLogo from '@/components/app/TradePinaxLogo';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
 
 /**
@@ -48,7 +49,7 @@ export default function AuthCallbackPage() {
         }
 
         if (cancelled) return;
-        setMessage('Success! Opening TradeMind Pro…');
+        setMessage('Success! Opening TradePinax…');
         router.replace('/app');
       } catch (err) {
         if (cancelled) return;
@@ -65,7 +66,7 @@ export default function AuthCallbackPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(165deg,#ffffff_0%,#f4f9fd_45%,#dceef8_100%)] px-4">
       <div className="max-w-md rounded-2xl border border-[#cfe0ee] bg-white p-6 text-center shadow-sm">
-        <p className="font-display text-lg font-semibold text-sky-ink">TradeMind Pro</p>
+        <TradePinaxLogo height={58} className="mx-auto" priority />
         <p className="mt-3 text-sm text-sky-ink/70">{message}</p>
         <a href="/?auth=login#auth" className="mt-5 inline-block text-sm font-semibold text-sky-deep hover:underline">
           Go to login

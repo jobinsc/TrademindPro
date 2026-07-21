@@ -1,17 +1,42 @@
 import type { Candle } from '@/lib/nejoic';
-import { runCatalogSignal } from '@/lib/backtest-signals';
-import type { CatalogStrategyId } from '@/lib/strategy-catalog';
+import { analyzeBlinkScalp, type BlinkSettings } from '@/lib/blink';
 import {
   inTradeWindow,
   istMinutesFromOpen,
   modelEntryPremium,
   pickOptionStrike,
   premiumStep,
+  estimateOptionDelta,
   type OptionMoneyness,
 } from '@/lib/option-sim';
+import { orbStopSpot } from '@/lib/blink-orb';
 
 export type OptionsBacktestInput = {
-  strategyId: string;
+  symbol: string;
+  strikeStep: number;
+  blinkSettings: Pick<
+    BlinkSettings,
+    | 'strategyMode'
+    | 'strategyMode2'
+    | 'strategyCombine'
+    | 'minConfidence'
+    | 'emaFast'
+    | 'emaSlow'
+    | 'rsiPeriod'
+    | 'rsiCeMin'
+    | 'rsiCeMax'
+    | 'rsiPeMin'
+    | 'rsiPeMax'
+    | 'cciPeriod'
+    | 'cciOversold'
+    | 'cciOverbought'
+    | 'paLeftBars'
+    | 'paRightBars'
+    | 'strikeMoneyness'
+    | 'symbol'
+    | 'orbMinutes'
+    | 'paLessonFocus'
+  >;
   fromDate: string;
   toDate: string;
   stopLossPremium: number;
@@ -66,9 +91,14 @@ export function runOptionsPremiumBacktest(
   input: OptionsBacktestInput
 ): OptionsBacktestResult {
   const capital = Math.max(1000, input.initialCapital || 100_000);
-  const minConf = input.minConfidence ?? 60;
+  const minConf = input.minConfidence ?? input.blinkSettings.minConfidence ?? 60;
   const sl = Math.max(1, input.stopLossPremium);
   const tg = Math.max(1, input.targetPremium);
+  const strikeStep = Math.max(0.5, input.strikeStep || 50);
+  const settingsWithSymbol = {
+    ...input.blinkSettings,
+    symbol: input.symbol || input.blinkSettings.symbol || 'NIFTY',
+  };
   const mult = input.lots * input.lotSize;
   const brokerage = input.brokeragePerLot * input.lots;
   const maxTradesDay = Math.max(1, input.maxTradesPerDay ?? 99);
@@ -103,8 +133,11 @@ export function runOptionsPremiumBacktest(
     premium: number;
     peak: number;
     lastSpot: number;
+    entrySpot: number;
     entryAt: string;
     setup: string;
+    /** Structural ORB stop on spot (range low/high) */
+    orbStop?: number | null;
   };
 
   let cash = capital;
@@ -148,40 +181,64 @@ export function runOptionsPremiumBacktest(
       pos.peak = Math.max(pos.peak, pos.premium);
       const move = pos.premium - pos.entryPremium;
 
+      // ORB: exit if spot hits the other side of the opening range
+      if (pos.orbStop != null) {
+        const hitOrbSl =
+          (pos.side === 'CE' && spot <= pos.orbStop) ||
+          (pos.side === 'PE' && spot >= pos.orbStop);
+        if (hitOrbSl) {
+          const delta = Math.abs(
+            estimateOptionDelta(pos.entrySpot, pos.strike, pos.side)
+          );
+          const spotMove = Math.abs(pos.entrySpot - pos.orbStop);
+          const premLoss = Math.max(
+            0.5,
+            Math.round(spotMove * Math.max(0.35, delta) * 10) / 10
+          );
+          closePos(Math.max(0.5, pos.entryPremium - premLoss), bar.t);
+          continue;
+        }
+      }
+
       if (move <= -sl) {
         closePos(pos.entryPremium - sl, bar.t);
       } else if (move >= tg) {
         closePos(pos.entryPremium + tg, bar.t);
       } else {
-        const sig = runCatalogSignal(input.strategyId as CatalogStrategyId, window);
-        if (sig && sig.confidence >= minConf) {
-          if (pos.side === 'CE' && sig.bias === 'PE') closePos(pos.premium, bar.t);
-          else if (pos.side === 'PE' && sig.bias === 'CE') closePos(pos.premium, bar.t);
+        const scalp = analyzeBlinkScalp(window, settingsWithSymbol, spot);
+        if (scalp.confidence >= minConf) {
+          if (pos.side === 'CE' && scalp.bias === 'PE') closePos(pos.premium, bar.t);
+          else if (pos.side === 'PE' && scalp.bias === 'CE') closePos(pos.premium, bar.t);
         }
       }
     }
 
     if (!pos) {
       if (!canOpenOnDay(bar.t)) continue;
-      const sig = runCatalogSignal(input.strategyId as CatalogStrategyId, window);
+      const scalp = analyzeBlinkScalp(window, settingsWithSymbol, spot);
       if (
-        sig &&
-        (sig.bias === 'CE' || sig.bias === 'PE') &&
-        sig.confidence >= minConf
+        (scalp.bias === 'CE' || scalp.bias === 'PE') &&
+        scalp.confidence >= minConf
       ) {
-        const strike = pickOptionStrike(spot, sig.bias, input.strikeMoneyness);
+        const strike = pickOptionStrike(spot, scalp.bias, input.strikeMoneyness, strikeStep);
         const mins = istMinutesFromOpen(bar.t);
-        const entryPremium = modelEntryPremium(spot, strike, sig.bias, mins);
+        const entryPremium = modelEntryPremium(spot, strike, scalp.bias, mins);
+        const isOrb = scalp.setup?.startsWith('ORB_BREAK');
         getDay(bar.t).trades += 1;
         pos = {
-          side: sig.bias,
+          side: scalp.bias,
           strike,
           entryPremium,
           premium: entryPremium,
           peak: entryPremium,
           lastSpot: spot,
+          entrySpot: spot,
           entryAt: bar.t,
-          setup: sig.setup,
+          setup: scalp.setup,
+          orbStop:
+            isOrb && scalp.orHigh != null && scalp.orLow != null
+              ? orbStopSpot(scalp.bias, scalp.orHigh, scalp.orLow)
+              : null,
         };
       }
     }

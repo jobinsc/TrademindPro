@@ -6,8 +6,12 @@ import { ModuleRunButton } from '@/components/ui/ModuleTabShell';
 import { BlinkSettingsPanel } from '@/components/blink/BlinkSettingsPanel';
 import { BlinkTradingLabPanel } from '@/components/blink/BlinkTradingLabPanel';
 import { BlinkStrategyChat } from '@/components/blink/BlinkStrategyChat';
+import { BlinkNiftyPaProfilePanel } from '@/components/blink/BlinkNiftyPaProfilePanel';
+import { BlinkNiftyStudyLabPanel } from '@/components/blink/BlinkNiftyStudyLabPanel';
+import { BlinkAtmMovementLab } from '@/components/blink/BlinkAtmMovementLab';
+import { BlinkProReplayPanel } from '@/components/blink/BlinkProReplayPanel';
 import { useBlink } from '@/hooks/useBlink';
-import { BLINK_NAME, blinkTradeBadge, type BlinkTrade } from '@/lib/blink';
+import { BLINK_NAME, blinkTradeBadge, blinkUnderlyingLabel, type BlinkTrade } from '@/lib/blink';
 import { formatCurrency } from '@/lib/utils';
 import FullStopBar from '@/components/trading/FullStopBar';
 import InfoBubble from '@/components/ui/InfoBubble';
@@ -63,12 +67,13 @@ export default function BlinkWorkspace() {
             <h1 className="font-display text-3xl font-semibold tracking-tight text-sky-ink">
               {BLINK_NAME}
             </h1>
-            <InfoBubble title="Live Nifty scalping">
+            <InfoBubble title="Live scalping">
               <p>
-                Uses real Nifty 1m candles + Upstox option LTP for entry and exit. No simulated
-                premium for P&amp;L.
+                Analyses <strong>{blinkUnderlyingLabel(settings.symbol || 'NIFTY')}</strong> charts.
+                Nifty index uses real Upstox option LTP for entry/exit. Nifty 50 stocks use live
+                stock candles — backtest simulates option premium.
               </p>
-              <p className="mt-2">Connect Upstox in Terminal once per day before auto-trade.</p>
+              <p className="mt-2">Connect Upstox in Terminal before auto-trade on Nifty.</p>
             </InfoBubble>
           </div>
         </div>
@@ -163,6 +168,11 @@ export default function BlinkWorkspace() {
           hint={lastQuoteAt ? `Updated ${lastQuoteAt.slice(11, 19)}` : 'No quote yet'}
         />
       </div>
+
+      <BlinkProReplayPanel />
+      <BlinkNiftyStudyLabPanel />
+      <BlinkAtmMovementLab />
+      <BlinkNiftyPaProfilePanel />
 
       <section className="mt-6 rounded-2xl border border-[#cfe0ee]/90 bg-white p-5">
         <div className="flex items-center gap-2">

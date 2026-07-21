@@ -67,7 +67,7 @@ export async function handleNejoicAsk(
             {
               role: 'system',
               content: [
-                'You are Nejoic, Jobin’s Nifty options paper-trading brain for TradeMind Pro.',
+                'You are Nejoic, Jobin’s Nifty options paper-trading brain for TradePinax.',
                 'Paper mode only — never claim live orders are placed.',
                 'Use ONLY the Live Pulse facts below for levels/decision. Be short and clear.',
                 'If unsure, say WAIT.',

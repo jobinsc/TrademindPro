@@ -2,6 +2,7 @@ import type { Candle, OptionBias } from '@/lib/nejoic';
 import type { NejoicStrategyId } from '@/lib/nejoic-options';
 import { computeCci, detectZeroCross } from '@/lib/cci';
 import { runPriceAction } from '@/lib/price-action';
+import { analyzeBlinkOrb } from '@/lib/blink-orb';
 
 function ema(values: number[], period: number): number[] {
   const out: number[] = [];
@@ -178,47 +179,12 @@ export function runNejoicStrategy(
   }
 
   if (strategy === 'orb') {
-    const minutes = Math.max(5, Math.min(60, opts.orbMinutes ?? 15));
-    const orBars = candles.filter((c) => {
-      const m = minutesFromOpenIst(c.t);
-      return m != null && m >= 0 && m < minutes;
-    });
-    // Fallback: first N bars of series if timestamps aren't session-aligned
-    const rangeBars = orBars.length >= 2 ? orBars : candles.slice(0, Math.min(candles.length - 2, 3));
-    if (rangeBars.length < 2) {
-      return {
-        bias: 'FLAT',
-        setup: 'ORB_WAIT',
-        confidence: 35,
-        reason: 'Opening range not formed yet.',
-      };
-    }
-    const orHigh = Math.max(...rangeBars.map((c) => c.high));
-    const orLow = Math.min(...rangeBars.map((c) => c.low));
-    const prev = closes[closes.length - 2] ?? spot;
-    const brokeUp = prev <= orHigh && spot > orHigh;
-    const brokeDn = prev >= orLow && spot < orLow;
-    if (brokeUp || spot > orHigh * 1.0002) {
-      return {
-        bias: 'CE',
-        setup: 'ORB_BREAK_HIGH',
-        confidence: brokeUp ? 76 : 64,
-        reason: `ORB ${minutes}m high ₹${orHigh.toFixed(0)} broken → CE.`,
-      };
-    }
-    if (brokeDn || spot < orLow * 0.9998) {
-      return {
-        bias: 'PE',
-        setup: 'ORB_BREAK_LOW',
-        confidence: brokeDn ? 76 : 64,
-        reason: `ORB ${minutes}m low ₹${orLow.toFixed(0)} broken → PE.`,
-      };
-    }
+    const orb = analyzeBlinkOrb(candles, opts.orbMinutes ?? 15);
     return {
-      bias: 'FLAT',
-      setup: 'ORB_INSIDE',
-      confidence: 44,
-      reason: `Inside ORB ₹${orLow.toFixed(0)}–₹${orHigh.toFixed(0)} (${minutes}m).`,
+      bias: orb.bias,
+      setup: orb.setup,
+      confidence: orb.confidence,
+      reason: orb.reason,
     };
   }
 

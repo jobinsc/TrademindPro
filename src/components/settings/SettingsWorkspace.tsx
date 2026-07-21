@@ -27,7 +27,7 @@ export default function SettingsWorkspace() {
           Settings &amp; Brokers
         </h1>
         <InfoBubble title="About Settings">
-          Profile and broker connection for your TradeMind Pro account.
+          Profile and broker connection for your TradePinax account.
         </InfoBubble>
       </div>
 

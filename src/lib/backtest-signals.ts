@@ -204,19 +204,29 @@ const DEFAULT_OPTS = {
   rsiOversold: 30,
   rsiOverbought: 70,
   breakoutLookback: 20,
-  orbMinutes: 15,
+  orbMinutes: 5,
 };
 
 /** Evaluate strategy on candle slice ending at last bar (closed). */
 export function runCatalogSignal(
   strategyId: CatalogStrategyId | string,
-  candles: Candle[]
+  candles: Candle[],
+  opts?: Partial<{
+    emaFast: number;
+    emaSlow: number;
+    rsiPeriod: number;
+    rsiOversold: number;
+    rsiOverbought: number;
+    breakoutLookback: number;
+    orbMinutes: number;
+  }>
 ): BarSignal | null {
   if (candles.length < 15) return null;
   const closes = candles.map((c) => c.close);
   const i = closes.length - 1;
   const spot = closes[i];
   const prev = closes[i - 1];
+  const merged = { ...DEFAULT_OPTS, ...opts };
 
   // Delegate existing Nejoic cores
   if (
@@ -229,7 +239,7 @@ export function runCatalogSignal(
     strategyId === 'cci_zero' ||
     strategyId === 'hhll_lonesome'
   ) {
-    return runNejoicStrategy(strategyId, candles, DEFAULT_OPTS);
+    return runNejoicStrategy(strategyId, candles, merged);
   }
 
   if (strategyId === 'price_action_hhll' || strategyId === 'swing_hl' || strategyId === 'hhll_lonesome') {
@@ -473,8 +483,8 @@ export function runCatalogSignal(
     const resist = Math.max(...window.map((c) => c.high));
     const nearSup = candles[i].low <= support * 1.001 && spot > support;
     const nearRes = candles[i].high >= resist * 0.999 && spot < resist;
-    if (nearSup) return { bias: 'CE', setup: 'SUPPORT_BOUNCE', confidence: 66, reason: 'Bounce from support' };
-    if (nearRes) return { bias: 'PE', setup: 'RESIST_REJECT', confidence: 66, reason: 'Reject from resistance' };
+    if (nearSup) return { bias: 'CE', setup: 'SUPPORT_BOUNCE', confidence: 72, reason: 'Bounce from support' };
+    if (nearRes) return { bias: 'PE', setup: 'RESIST_REJECT', confidence: 72, reason: 'Reject from resistance' };
     return flat('SR_WAIT', 'Away from levels');
   }
 
@@ -492,6 +502,412 @@ export function runCatalogSignal(
     if (spot >= hi - width * 0.15)
       return { bias: 'PE', setup: 'RANGE_HIGH', confidence: 64, reason: 'Near range high' };
     return flat('RANGE_MID', 'Mid-range');
+  }
+
+  // --- Candlestick patterns ---
+  {
+    const c = candles[i];
+    const p1 = candles[i - 1];
+    const p2 = i >= 2 ? candles[i - 2] : null;
+    const body = (x: Candle) => Math.abs(x.close - x.open);
+    const range = (x: Candle) => x.high - x.low || 1;
+    const lowerWick = (x: Candle) => Math.min(x.open, x.close) - x.low;
+    const upperWick = (x: Candle) => x.high - Math.max(x.open, x.close);
+    const isBull = (x: Candle) => x.close > x.open;
+    const isBear = (x: Candle) => x.close < x.open;
+    const smallBody = (x: Candle) => body(x) / range(x) < 0.25;
+    const recentLow =
+      i >= 10 && c.low <= Math.min(...candles.slice(i - 10, i).map((x) => x.low)) * 1.002;
+    const recentHigh =
+      i >= 10 && c.high >= Math.max(...candles.slice(i - 10, i).map((x) => x.high)) * 0.998;
+
+    if (strategyId === 'hammer') {
+      if (
+        recentLow &&
+        lowerWick(c) > body(c) * 2 &&
+        lowerWick(c) > range(c) * 0.5 &&
+        upperWick(c) < body(c) * 0.6
+      ) {
+        return { bias: 'CE', setup: 'HAMMER', confidence: 70, reason: 'Hammer at support' };
+      }
+      return flat('HAMMER_WAIT', 'No hammer');
+    }
+
+    if (strategyId === 'inverted_hammer') {
+      if (
+        recentLow &&
+        upperWick(c) > body(c) * 2 &&
+        upperWick(c) > range(c) * 0.5 &&
+        lowerWick(c) < body(c) * 0.6
+      ) {
+        return {
+          bias: 'CE',
+          setup: 'INV_HAMMER',
+          confidence: 68,
+          reason: 'Inverted hammer at lows',
+        };
+      }
+      return flat('INV_HAMMER_WAIT', 'No inverted hammer');
+    }
+
+    if (strategyId === 'shooting_star') {
+      if (
+        recentHigh &&
+        upperWick(c) > body(c) * 2 &&
+        upperWick(c) > range(c) * 0.5 &&
+        lowerWick(c) < body(c) * 0.6
+      ) {
+        return {
+          bias: 'PE',
+          setup: 'SHOOTING_STAR',
+          confidence: 70,
+          reason: 'Shooting star at highs',
+        };
+      }
+      return flat('STAR_WAIT', 'No shooting star');
+    }
+
+    if (strategyId === 'hanging_man') {
+      if (
+        recentHigh &&
+        lowerWick(c) > body(c) * 2 &&
+        lowerWick(c) > range(c) * 0.5 &&
+        upperWick(c) < body(c) * 0.6
+      ) {
+        return {
+          bias: 'PE',
+          setup: 'HANGING_MAN',
+          confidence: 68,
+          reason: 'Hanging man after rally',
+        };
+      }
+      return flat('HANG_WAIT', 'No hanging man');
+    }
+
+    if (strategyId === 'doji_reversal') {
+      if (smallBody(c) && body(c) / range(c) < 0.12) {
+        if (recentLow && spot > c.open)
+          return { bias: 'CE', setup: 'DOJI_BULL', confidence: 66, reason: 'Doji bounce at low' };
+        if (recentHigh && spot < c.open)
+          return { bias: 'PE', setup: 'DOJI_BEAR', confidence: 66, reason: 'Doji reject at high' };
+      }
+      return flat('DOJI_WAIT', 'No doji reversal');
+    }
+
+    if (strategyId === 'morning_star' && p2) {
+      const star = p1;
+      if (
+        isBear(p2) &&
+        smallBody(star) &&
+        isBull(c) &&
+        c.close > (p2.open + p2.close) / 2 &&
+        star.high < p2.open
+      ) {
+        return {
+          bias: 'CE',
+          setup: 'MORNING_STAR',
+          confidence: 74,
+          reason: 'Morning star reversal',
+        };
+      }
+      return flat('MS_WAIT', 'No morning star');
+    }
+
+    if (strategyId === 'evening_star' && p2) {
+      const star = p1;
+      if (
+        isBull(p2) &&
+        smallBody(star) &&
+        isBear(c) &&
+        c.close < (p2.open + p2.close) / 2 &&
+        star.low > p2.open
+      ) {
+        return {
+          bias: 'PE',
+          setup: 'EVENING_STAR',
+          confidence: 74,
+          reason: 'Evening star reversal',
+        };
+      }
+      return flat('ES_WAIT', 'No evening star');
+    }
+
+    if (strategyId === 'three_white_soldiers' && p2) {
+      if (
+        isBull(p2) &&
+        isBull(p1) &&
+        isBull(c) &&
+        c.close > p1.close &&
+        p1.close > p2.close &&
+        body(c) > range(c) * 0.45
+      ) {
+        return {
+          bias: 'CE',
+          setup: '3_WHITE',
+          confidence: 72,
+          reason: 'Three white soldiers',
+        };
+      }
+      return flat('3W_WAIT', 'No three white soldiers');
+    }
+
+    if (strategyId === 'three_black_crows' && p2) {
+      if (
+        isBear(p2) &&
+        isBear(p1) &&
+        isBear(c) &&
+        c.close < p1.close &&
+        p1.close < p2.close &&
+        body(c) > range(c) * 0.45
+      ) {
+        return {
+          bias: 'PE',
+          setup: '3_CROWS',
+          confidence: 72,
+          reason: 'Three black crows',
+        };
+      }
+      return flat('3C_WAIT', 'No three black crows');
+    }
+
+    if (strategyId === 'harami_bull') {
+      if (
+        isBear(p1) &&
+        isBull(c) &&
+        c.high <= p1.high &&
+        c.low >= p1.low &&
+        body(c) < body(p1) * 0.7
+      ) {
+        return { bias: 'CE', setup: 'HARAMI_BULL', confidence: 68, reason: 'Bullish harami' };
+      }
+      return flat('HARAMI_B_WAIT', 'No bullish harami');
+    }
+
+    if (strategyId === 'harami_bear') {
+      if (
+        isBull(p1) &&
+        isBear(c) &&
+        c.high <= p1.high &&
+        c.low >= p1.low &&
+        body(c) < body(p1) * 0.7
+      ) {
+        return { bias: 'PE', setup: 'HARAMI_BEAR', confidence: 68, reason: 'Bearish harami' };
+      }
+      return flat('HARAMI_S_WAIT', 'No bearish harami');
+    }
+
+    if (strategyId === 'tweezer_top') {
+      const matchHi = Math.abs(c.high - p1.high) / (p1.high || 1) < 0.0015;
+      if (matchHi && isBull(p1) && isBear(c) && recentHigh) {
+        return { bias: 'PE', setup: 'TWEEZER_TOP', confidence: 70, reason: 'Tweezer top' };
+      }
+      return flat('TW_TOP_WAIT', 'No tweezer top');
+    }
+
+    if (strategyId === 'tweezer_bottom') {
+      const matchLo = Math.abs(c.low - p1.low) / (p1.low || 1) < 0.0015;
+      if (matchLo && isBear(p1) && isBull(c) && recentLow) {
+        return { bias: 'CE', setup: 'TWEEZER_BOT', confidence: 70, reason: 'Tweezer bottom' };
+      }
+      return flat('TW_BOT_WAIT', 'No tweezer bottom');
+    }
+
+    if (strategyId === 'marubozu_break') {
+      const fullBody = body(c) / range(c) > 0.75;
+      if (fullBody && isBull(c) && spot > p1.high) {
+        return { bias: 'CE', setup: 'MARU_UP', confidence: 71, reason: 'Bullish marubozu break' };
+      }
+      if (fullBody && isBear(c) && spot < p1.low) {
+        return { bias: 'PE', setup: 'MARU_DN', confidence: 71, reason: 'Bearish marubozu break' };
+      }
+      return flat('MARU_WAIT', 'No marubozu break');
+    }
+  }
+
+  // --- Smart Money Concepts (practical approximations on OHLC) ---
+  {
+    const look = Math.min(40, i);
+    const window = candles.slice(i - look, i + 1);
+    const swingHi = Math.max(...window.slice(0, -1).map((x) => x.high));
+    const swingLo = Math.min(...window.slice(0, -1).map((x) => x.low));
+    const c = candles[i];
+    const p1 = candles[i - 1];
+    const p2 = i >= 2 ? candles[i - 2] : null;
+    const impulseUp =
+      p2 != null && c.close > p2.high && p1.close < p1.open && c.close > c.open;
+    const impulseDn =
+      p2 != null && c.close < p2.low && p1.close > p1.open && c.close < c.open;
+
+    if (strategyId === 'smc_order_block_bull') {
+      if (impulseUp && p1.close < p1.open) {
+        const inOb = spot >= p1.low && spot <= p1.high;
+        if (inOb || (candles[i].low <= p1.high && spot > p1.close)) {
+          return {
+            bias: 'CE',
+            setup: 'OB_BULL',
+            confidence: 72,
+            reason: 'Bullish order block retest',
+          };
+        }
+      }
+      return flat('OB_BULL_WAIT', 'No bullish OB');
+    }
+
+    if (strategyId === 'smc_order_block_bear') {
+      if (impulseDn && p1.close > p1.open) {
+        const inOb = spot >= p1.low && spot <= p1.high;
+        if (inOb || (candles[i].high >= p1.low && spot < p1.close)) {
+          return {
+            bias: 'PE',
+            setup: 'OB_BEAR',
+            confidence: 72,
+            reason: 'Bearish order block retest',
+          };
+        }
+      }
+      return flat('OB_BEAR_WAIT', 'No bearish OB');
+    }
+
+    if (strategyId === 'smc_fvg_bull' && p2) {
+      const gap = c.low - p2.high;
+      if (gap > 0 && spot >= p2.high && spot <= c.low) {
+        return { bias: 'CE', setup: 'FVG_BULL', confidence: 70, reason: 'Bullish FVG fill zone' };
+      }
+      if (gap > 0 && candles[i].low <= c.low && spot > p2.high) {
+        return { bias: 'CE', setup: 'FVG_BULL', confidence: 68, reason: 'Entering bullish FVG' };
+      }
+      return flat('FVG_B_WAIT', 'No bullish FVG');
+    }
+
+    if (strategyId === 'smc_fvg_bear' && p2) {
+      const gap = p2.low - c.high;
+      if (gap > 0 && spot <= p2.low && spot >= c.high) {
+        return { bias: 'PE', setup: 'FVG_BEAR', confidence: 70, reason: 'Bearish FVG fill zone' };
+      }
+      if (gap > 0 && candles[i].high >= c.high && spot < p2.low) {
+        return { bias: 'PE', setup: 'FVG_BEAR', confidence: 68, reason: 'Entering bearish FVG' };
+      }
+      return flat('FVG_S_WAIT', 'No bearish FVG');
+    }
+
+    if (strategyId === 'smc_liquidity_sweep_high') {
+      if (candles[i].high > swingHi && spot < swingHi && c.close < c.open) {
+        return {
+          bias: 'PE',
+          setup: 'LIQ_SWEEP_HI',
+          confidence: 73,
+          reason: 'Sweep above highs then reject',
+        };
+      }
+      return flat('LIQ_HI_WAIT', 'No high sweep');
+    }
+
+    if (strategyId === 'smc_liquidity_sweep_low') {
+      if (candles[i].low < swingLo && spot > swingLo && c.close > c.open) {
+        return {
+          bias: 'CE',
+          setup: 'LIQ_SWEEP_LO',
+          confidence: 73,
+          reason: 'Sweep below lows then reclaim',
+        };
+      }
+      return flat('LIQ_LO_WAIT', 'No low sweep');
+    }
+
+    if (strategyId === 'smc_bos_bull') {
+      if (spot > swingHi && prev <= swingHi) {
+        return { bias: 'CE', setup: 'BOS_BULL', confidence: 74, reason: 'Break of structure up' };
+      }
+      return flat('BOS_B_WAIT', 'No bullish BOS');
+    }
+
+    if (strategyId === 'smc_bos_bear') {
+      if (spot < swingLo && prev >= swingLo) {
+        return { bias: 'PE', setup: 'BOS_BEAR', confidence: 74, reason: 'Break of structure down' };
+      }
+      return flat('BOS_S_WAIT', 'No bearish BOS');
+    }
+
+    if (strategyId === 'smc_choch_bull') {
+      if (i < 5) return flat('CHOCH_B_WAIT', 'Need more bars');
+      const priorDn = closes[i - 5] > closes[i - 1] && closes[i - 1] < closes[i - 3];
+      if (priorDn && spot > swingHi * 0.999) {
+        return { bias: 'CE', setup: 'CHOCH_BULL', confidence: 71, reason: 'Bullish CHoCH' };
+      }
+      return flat('CHOCH_B_WAIT', 'No bullish CHoCH');
+    }
+
+    if (strategyId === 'smc_choch_bear') {
+      if (i < 5) return flat('CHOCH_S_WAIT', 'Need more bars');
+      const priorUp = closes[i - 5] < closes[i - 1] && closes[i - 1] > closes[i - 3];
+      if (priorUp && spot < swingLo * 1.001) {
+        return { bias: 'PE', setup: 'CHOCH_BEAR', confidence: 71, reason: 'Bearish CHoCH' };
+      }
+      return flat('CHOCH_S_WAIT', 'No bearish CHoCH');
+    }
+
+    if (strategyId === 'smc_breaker_block') {
+      if (p2 && p1.close > p1.open && spot < p1.low && spot < p2.low) {
+        return { bias: 'PE', setup: 'BREAKER_BEAR', confidence: 69, reason: 'Breaker block short' };
+      }
+      if (p2 && p1.close < p1.open && spot > p1.high && spot > p2.high) {
+        return { bias: 'CE', setup: 'BREAKER_BULL', confidence: 69, reason: 'Breaker block long' };
+      }
+      return flat('BREAKER_WAIT', 'No breaker');
+    }
+
+    if (strategyId === 'smc_mitigation_block') {
+      const mid = (swingHi + swingLo) / 2;
+      if (spot < mid && candles[i].low <= swingLo * 1.002 && c.close > c.open) {
+        return {
+          bias: 'CE',
+          setup: 'MITIGATION_LONG',
+          confidence: 67,
+          reason: 'Mitigation of lows',
+        };
+      }
+      if (spot > mid && candles[i].high >= swingHi * 0.998 && c.close < c.open) {
+        return {
+          bias: 'PE',
+          setup: 'MITIGATION_SHORT',
+          confidence: 67,
+          reason: 'Mitigation of highs',
+        };
+      }
+      return flat('MIT_WAIT', 'No mitigation');
+    }
+
+    if (strategyId === 'smc_premium_discount') {
+      const mid = (swingHi + swingLo) / 2;
+      const width = swingHi - swingLo || 1;
+      if (spot <= mid - width * 0.15 && c.close > c.open) {
+        return { bias: 'CE', setup: 'DISCOUNT_BUY', confidence: 66, reason: 'Buy in discount' };
+      }
+      if (spot >= mid + width * 0.15 && c.close < c.open) {
+        return { bias: 'PE', setup: 'PREMIUM_SELL', confidence: 66, reason: 'Sell in premium' };
+      }
+      return flat('PD_WAIT', 'Equilibrium zone');
+    }
+
+    if (strategyId === 'smc_inducement') {
+      if (candles[i].high > swingHi && spot < p1.close && c.close < c.open) {
+        return {
+          bias: 'PE',
+          setup: 'INDUCE_TRAP_HI',
+          confidence: 70,
+          reason: 'Inducement above highs',
+        };
+      }
+      if (candles[i].low < swingLo && spot > p1.close && c.close > c.open) {
+        return {
+          bias: 'CE',
+          setup: 'INDUCE_TRAP_LO',
+          confidence: 70,
+          reason: 'Inducement below lows',
+        };
+      }
+      return flat('INDUCE_WAIT', 'No inducement trap');
+    }
   }
 
   return flat('UNKNOWN', `No signal engine for ${strategyId}`);

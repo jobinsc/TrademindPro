@@ -12,6 +12,18 @@ export type NiftyOptionContract = {
   lotSize: number;
 };
 
+export type UpstoxOptionGreeks = {
+  instrumentKey: string;
+  lastPrice: number;
+  iv: number;
+  vega: number;
+  gamma: number;
+  theta: number;
+  delta: number;
+  oi: number;
+  volume: number;
+};
+
 type ContractRow = {
   instrument_key?: string;
   trading_symbol?: string;
@@ -31,12 +43,10 @@ function round50(n: number) {
 /** Nearest weekly (or listed) Nifty option contracts from Upstox */
 export async function fetchNiftyOptionContracts(
   accessToken: string,
-  expiryKeyword: 'current_week' | 'next_week' = 'current_week'
+  expiryKeyword?: 'current_week' | 'next_week'
 ): Promise<ContractRow[]> {
-  const qs = new URLSearchParams({
-    instrument_key: NIFTY_INDEX_KEY,
-    expiry_date: expiryKeyword,
-  });
+  const qs = new URLSearchParams({ instrument_key: NIFTY_INDEX_KEY });
+  if (expiryKeyword) qs.set('expiry_date', expiryKeyword);
   const res = await fetch(`${UPSTOX_API_BASE}/option/contract?${qs}`, {
     headers: {
       Accept: 'application/json',
@@ -50,6 +60,75 @@ export async function fetchNiftyOptionContracts(
   }
   const json = (await res.json()) as { data?: ContractRow[] };
   return Array.isArray(json.data) ? json.data : [];
+}
+
+/**
+ * Fallback for days where the relative `next_week` keyword returns no rows:
+ * select the first actual listed expiry strictly after the supplied date.
+ */
+export async function fetchNextListedNiftyOptionContracts(
+  accessToken: string,
+  afterDate: string
+): Promise<ContractRow[]> {
+  const all = await fetchNiftyOptionContracts(accessToken);
+  const nextExpiry = [...new Set(
+    all
+      .map((row) => String(row.expiry || '').slice(0, 10))
+      .filter((expiry) => /^\d{4}-\d{2}-\d{2}$/.test(expiry) && expiry > afterDate)
+  )].sort()[0];
+  return nextExpiry
+    ? all.filter((row) => String(row.expiry || '').slice(0, 10) === nextExpiry)
+    : [];
+}
+
+/** Fetch live Greeks for up to 50 option contracts in one Upstox V3 call. */
+export async function fetchUpstoxOptionGreeks(
+  accessToken: string,
+  instrumentKeys: string[]
+): Promise<UpstoxOptionGreeks[]> {
+  if (!instrumentKeys.length) return [];
+  const encoded = encodeURIComponent(instrumentKeys.slice(0, 50).join(','));
+  const res = await fetch(
+    `https://api.upstox.com/v3/market-quote/option-greek?instrument_key=${encoded}`,
+    {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken.trim()}`,
+      },
+      cache: 'no-store',
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Upstox option Greeks ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const json = (await res.json()) as {
+    data?: Record<
+      string,
+      {
+        instrument_token?: string;
+        last_price?: number;
+        iv?: number;
+        vega?: number;
+        gamma?: number;
+        theta?: number;
+        delta?: number;
+        oi?: number;
+        volume?: number;
+      }
+    >;
+  };
+  return Object.entries(json.data || {}).map(([fallbackKey, row]) => ({
+    instrumentKey: String(row.instrument_token || fallbackKey),
+    lastPrice: Number(row.last_price ?? 0),
+    iv: Number(row.iv ?? 0),
+    vega: Number(row.vega ?? 0),
+    gamma: Number(row.gamma ?? 0),
+    theta: Number(row.theta ?? 0),
+    delta: Number(row.delta ?? 0),
+    oi: Number(row.oi ?? 0),
+    volume: Number(row.volume ?? 0),
+  }));
 }
 
 export function pickAtmContract(

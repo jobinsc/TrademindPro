@@ -1,9 +1,11 @@
 import type { Candle } from '@/lib/nejoic';
-import type { BlinkStrategyMode } from '@/lib/blink-strategies';
-import { blinkStrategyCatalogId, blinkStrategyDisplayName } from '@/lib/blink-strategies';
-import { blinkTimeframeLabel } from '@/lib/blink';
+import { blinkStrategyComboLabel } from '@/lib/blink-multi-strategy';
+import { blinkStrategyDisplayName, type BlinkStrategyMode } from '@/lib/blink-strategies';
+import { blinkTimeframeLabel, defaultBlinkSettings, type BlinkSettings } from '@/lib/blink';
+import { blinkUnderlyingLabel, blinkStrikeStep, blinkTradeQty, blinkDefaultBrokerage } from '@/lib/blink-universe';
 import {
   runOptionsPremiumBacktest,
+  type OptionsBacktestInput,
   type OptionsBacktestTrade,
 } from '@/lib/blink-options-backtest';
 import type { OptionMoneyness } from '@/lib/option-sim';
@@ -37,6 +39,8 @@ function plainTimeWindow(start: string, end: string): string {
 
 export type BlinkUserBacktestInput = {
   strategyMode: BlinkStrategyMode;
+  strategyMode2?: BlinkStrategyMode | 'none' | '';
+  strategyCombine?: 'any' | 'all';
   stopLossPoints: number;
   targetPoints: number;
   minConfidence: number;
@@ -53,6 +57,32 @@ export type BlinkUserBacktestInput = {
   lookbackDays: number;
   fromDate: string;
   toDate: string;
+  symbol: string;
+  exchange: 'NSE';
+  /** Full Blink signal settings for multi-strategy backtest */
+  blinkSettings: Pick<
+    BlinkSettings,
+    | 'strategyMode'
+    | 'strategyMode2'
+    | 'strategyCombine'
+    | 'minConfidence'
+    | 'emaFast'
+    | 'emaSlow'
+    | 'rsiPeriod'
+    | 'rsiCeMin'
+    | 'rsiCeMax'
+    | 'rsiPeMin'
+    | 'rsiPeMax'
+    | 'cciPeriod'
+    | 'cciOversold'
+    | 'cciOverbought'
+    | 'paLeftBars'
+    | 'paRightBars'
+    | 'strikeMoneyness'
+    | 'symbol'
+    | 'orbMinutes'
+    | 'paLessonFocus'
+  >;
 };
 
 export type BlinkDailyReportRow = {
@@ -68,6 +98,8 @@ export type BlinkDailyReportRow = {
 export type BlinkUserBacktestReport = {
   tested: {
     strategyLabel: string;
+    symbol: string;
+    symbolLabel: string;
     strategyMode: BlinkStrategyMode;
     timeframe: string;
     timeframeLabel: string;
@@ -96,6 +128,34 @@ export type BlinkUserBacktestReport = {
   plainBullets: string[];
   dailyRows: BlinkDailyReportRow[];
 };
+
+export function pickBlinkBacktestSettings(
+  source: Partial<BlinkSettings> & { strategyMode: BlinkStrategyMode }
+): OptionsBacktestInput['blinkSettings'] {
+  const s = { ...defaultBlinkSettings(), ...source };
+  return {
+    strategyMode: s.strategyMode,
+    strategyMode2: s.strategyMode2 ?? 'none',
+    strategyCombine: s.strategyCombine ?? 'all',
+    minConfidence: s.minConfidence,
+    emaFast: s.emaFast,
+    emaSlow: s.emaSlow,
+    rsiPeriod: s.rsiPeriod,
+    rsiCeMin: s.rsiCeMin,
+    rsiCeMax: s.rsiCeMax,
+    rsiPeMin: s.rsiPeMin,
+    rsiPeMax: s.rsiPeMax,
+    cciPeriod: s.cciPeriod,
+    cciOversold: s.cciOversold,
+    cciOverbought: s.cciOverbought,
+    paLeftBars: s.paLeftBars,
+    paRightBars: s.paRightBars,
+    strikeMoneyness: s.strikeMoneyness,
+    symbol: s.symbol || 'NIFTY',
+    orbMinutes: s.orbMinutes ?? 5,
+    paLessonFocus: s.paLessonFocus ?? 'all',
+  };
+}
 
 export function blinkStrategyLabel(mode: BlinkStrategyMode): string {
   return blinkStrategyDisplayName(mode);
@@ -160,11 +220,19 @@ export function runUserBlinkBacktest(
   candles: Candle[],
   input: BlinkUserBacktestInput
 ): BlinkUserBacktestReport {
-  const strategyId = blinkStrategyCatalogId(input.strategyMode);
-  const strategyLabel = blinkStrategyLabel(input.strategyMode);
+  const strategyLabel = blinkStrategyComboLabel({
+    strategyMode: input.strategyMode,
+    strategyMode2: input.strategyMode2 ?? 'none',
+    strategyCombine: input.strategyCombine ?? 'all',
+  });
+
+  const symbol = input.symbol || input.blinkSettings.symbol || 'NIFTY';
+  const symbolLabel = blinkUnderlyingLabel(symbol);
 
   const run = runOptionsPremiumBacktest(candles, {
-    strategyId,
+    symbol,
+    strikeStep: blinkStrikeStep(symbol),
+    blinkSettings: input.blinkSettings,
     fromDate: input.fromDate,
     toDate: input.toDate,
     stopLossPremium: input.stopLossPoints,
@@ -210,10 +278,16 @@ export function runUserBlinkBacktest(
       ? `With your exact settings, the backtest lost ₹${Math.round(Math.abs(run.netPnl))} over ${dailyRows.length} trading days.`
       : `With your exact settings, the backtest broke even over ${dailyRows.length} trading days.`;
 
+  const qty = blinkTradeQty(symbol, input.maxLotsPerTrade);
+  const brok = input.brokeragePerLot;
+  const maxLossPerTrade = Math.round(input.stopLossPoints * qty + brok * input.maxLotsPerTrade);
+
   const plainBullets = [
-    `Strategy tested: ${plainStrategyName(strategyLabel)} on ${tfLabel} Nifty charts.`,
+    `Underlying: ${symbolLabel} (${symbol}).`,
+    `Strategy tested: ${strategyLabel} on ${tfLabel} charts.`,
     `Trade only between ${plainTimeWindow(input.tradeWindowStart, input.tradeWindowEnd)}.`,
-    `Strike type: ${plainMoneyness(input.strikeMoneyness)} · Stop ${input.stopLossPoints} pts · Target ${input.targetPoints} pts · ${input.maxLotsPerTrade} lot(s).`,
+    `Qty ${qty} units · Stop ${input.stopLossPoints} premium pts (≈ ₹${input.stopLossPoints * qty} loss) + ₹${brok} brokerage per trade → worst case ~₹${maxLossPerTrade}/trade.`,
+    `Target ${input.targetPoints} premium pts · ${input.maxLotsPerTrade} lot(s) · max ${input.maxTradesPerDay} trades/day.`,
     `Total ${run.totalTrades} trades · ${Math.round(run.winRate)}% winners · max ${input.maxTradesPerDay} trades allowed per day.`,
     `${greenDays} profitable days, ${redDays} loss days, ${flatDays} days with no trades.`,
     bestDay
@@ -228,6 +302,8 @@ export function runUserBlinkBacktest(
   return {
     tested: {
       strategyLabel,
+      symbol,
+      symbolLabel,
       strategyMode: input.strategyMode,
       timeframe: input.chartTimeframe,
       timeframeLabel: tfLabel,

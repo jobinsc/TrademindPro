@@ -79,7 +79,7 @@ export default function TelegramBotWorkspace() {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          text: '✅ TradeMind Pro test — Telegram is working.\nIf you see this, bot token + chat id are correct.',
+          text: '✅ TradePinax test — Telegram is working.\nIf you see this, bot token + chat id are correct.',
         }),
       });
       const data = (await res.json()) as { ok?: boolean; error?: string; sent?: number; deduped?: boolean };

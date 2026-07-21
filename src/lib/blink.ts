@@ -13,14 +13,45 @@ import {
 import type { Candle, OptionBias } from '@/lib/nejoic';
 import { computeCci, detectZeroCross } from '@/lib/cci';
 import { runPriceAction } from '@/lib/price-action';
-import { inTradeWindow, pickOptionStrike } from '@/lib/option-sim';
+import { inTradeWindow, pickOptionStrike, roundStrike } from '@/lib/option-sim';
 import { ALL_TIMEFRAMES } from '@/lib/strategy-catalog';
+import {
+  analyzeNiftyPaProfile,
+  type PaLessonFocus,
+} from '@/lib/blink-nifty-pa-profile';
+import { analyzeBlinkOrb } from '@/lib/blink-orb';
 import { runCatalogSignal } from '@/lib/backtest-signals';
 import {
   BLINK_STRATEGY_MODES,
   blinkStrategyCatalogId,
   type BlinkStrategyMode,
 } from '@/lib/blink-strategies';
+import {
+  activeBlinkStrategies,
+  mergeBlinkStrategySignals,
+} from '@/lib/blink-multi-strategy';
+import {
+  blinkStrikeStep,
+  blinkUnderlying,
+  blinkUnderlyingLabel,
+  blinkDefaultLotSize,
+  blinkTradeQty,
+  blinkFoLotSize,
+  blinkDefaultBrokerage,
+} from '@/lib/blink-universe';
+
+export {
+  BLINK_NIFTY50_STOCKS,
+  BLINK_NIFTY_INDEX,
+  blinkUnderlying,
+  blinkUnderlyingLabel,
+  blinkSupportsLiveOptions,
+  isBlinkNifty50Stock,
+  blinkDefaultLotSize,
+  blinkTradeQty,
+  blinkFoLotSize,
+  blinkDefaultBrokerage,
+} from '@/lib/blink-universe';
 
 export { BLINK_STRATEGY_MODES, type BlinkStrategyMode } from '@/lib/blink-strategies';
 
@@ -44,13 +75,20 @@ export type BlinkStatus =
   | 'stopped_loss';
 
 export type BlinkSettings = {
+  /** Underlying — NIFTY index or Nifty 50 stock */
+  symbol: string;
+  exchange: 'NSE';
   dailyProfitTarget: number;
   dailyMaxLoss: number;
   lotSize: number;
   maxLotsPerTrade: number;
   minConfidence: number;
-  /** Which signal engine Blink uses */
+  /** Primary signal engine */
   strategyMode: BlinkStrategyMode;
+  /** Optional second engine — empty / none = off */
+  strategyMode2: BlinkStrategyMode | 'none' | '';
+  /** How to combine when 2 strategies are on */
+  strategyCombine: 'any' | 'all';
   emaFast: number;
   emaSlow: number;
   rsiPeriod: number;
@@ -65,6 +103,10 @@ export type BlinkSettings = {
   /** HH/LL pivot bars (Lonesome Pine: left=5, right=5) */
   paLeftBars: number;
   paRightBars: number;
+  /** Nifty PA profile — train UP / DOWN / SIDEWAYS one by one */
+  paLessonFocus: PaLessonFocus;
+  /** Opening range minutes for ORB (5 / 15 / 30) */
+  orbMinutes: number;
   /** CE/PE strike vs spot */
   strikeMoneyness: 'atm' | 'itm' | 'otm';
   /** IST scalp window (HH:MM) */
@@ -104,6 +146,10 @@ export type BlinkSignal = {
   paTrend?: 'BULL' | 'BEAR' | 'NEUTRAL';
   support?: number | null;
   resistance?: number | null;
+  /** ORB range levels when setup is ORB_* */
+  orHigh?: number;
+  orLow?: number;
+  orbMinutes?: number;
 };
 
 export type BlinkTrade = {
@@ -178,12 +224,39 @@ function round50(n: number) {
 function analyzeBlinkFromCatalog(
   candles: Candle[],
   catalogId: string,
-  settings: Pick<BlinkSettings, 'minConfidence'>,
+  settings: Pick<BlinkSettings, 'minConfidence' | 'orbMinutes'>,
   spot: number,
   strike: number,
   premium: number
 ): BlinkSignal {
-  const sig = runCatalogSignal(catalogId, candles);
+  if (catalogId === 'orb') {
+    const orb = analyzeBlinkOrb(candles, settings.orbMinutes ?? 5);
+    if (orb.bias === 'FLAT' || orb.confidence < settings.minConfidence) {
+      return {
+        ...flatBlinkSignal(spot, strike, premium, orb.setup, orb.reason),
+        orHigh: orb.orHigh,
+        orLow: orb.orLow,
+        orbMinutes: orb.orbMinutes,
+      };
+    }
+    return {
+      bias: orb.bias,
+      niftySpot: spot,
+      strike,
+      premium,
+      confidence: orb.confidence,
+      setup: orb.setup,
+      reason: orb.reason,
+      emaFast: 0,
+      emaSlow: 0,
+      rsi: 50,
+      orHigh: orb.orHigh,
+      orLow: orb.orLow,
+      orbMinutes: orb.orbMinutes,
+    };
+  }
+
+  const sig = runCatalogSignal(catalogId, candles, { orbMinutes: settings.orbMinutes });
   if (!sig || sig.bias === 'FLAT') {
     return flatBlinkSignal(
       spot,
@@ -218,12 +291,16 @@ function analyzeBlinkFromCatalog(
 
 export function defaultBlinkSettings(): BlinkSettings {
   return {
+    symbol: 'NIFTY',
+    exchange: 'NSE',
     dailyProfitTarget: 1500,
     dailyMaxLoss: 1000,
     lotSize: 65,
     maxLotsPerTrade: 1,
     minConfidence: 68,
     strategyMode: 'cci_hhll_combo',
+    strategyMode2: 'none',
+    strategyCombine: 'all',
     emaFast: 9,
     emaSlow: 21,
     rsiPeriod: 7,
@@ -236,6 +313,8 @@ export function defaultBlinkSettings(): BlinkSettings {
     cciOverbought: 100,
     paLeftBars: 5,
     paRightBars: 5,
+    paLessonFocus: 'all',
+    orbMinutes: 5,
     strikeMoneyness: 'atm',
     tradeWindowStart: '09:20',
     tradeWindowEnd: '15:15',
@@ -576,11 +655,11 @@ function analyzeBlinkCciHhll(
   };
 }
 
-export function analyzeBlinkScalp(
+function analyzeBlinkSingleStrategy(
+  mode: BlinkStrategyMode,
   candles: Candle[],
   settings: Pick<
     BlinkSettings,
-    | 'strategyMode'
     | 'emaFast'
     | 'emaSlow'
     | 'rsiPeriod'
@@ -594,44 +673,106 @@ export function analyzeBlinkScalp(
     | 'cciOverbought'
     | 'paLeftBars'
     | 'paRightBars'
+    | 'orbMinutes'
+    | 'paLessonFocus'
+    | 'strikeMoneyness'
   >,
-  liveSpot?: number,
-  livePremium?: number | null
+  spot: number,
+  strike: number,
+  premium: number
 ): BlinkSignal {
-  const spot = liveSpot ?? candles[candles.length - 1]?.close ?? 24850;
-  const strike = round50(spot);
-  const premium = livePremium != null && livePremium > 0 ? livePremium : 0;
-
-  let sig: BlinkSignal;
-  switch (settings.strategyMode) {
+  switch (mode) {
     case 'cci_zero':
-      sig = analyzeBlinkCci(candles, settings, spot, strike, premium);
-      break;
+      return analyzeBlinkCci(candles, settings, spot, strike, premium);
     case 'hhll_pa':
-      sig = analyzeBlinkHhll(candles, settings, spot, strike, premium);
-      break;
+      return analyzeBlinkHhll(candles, settings, spot, strike, premium);
     case 'cci_hhll_combo':
-      sig = analyzeBlinkCciHhll(candles, settings as BlinkSettings, spot, strike, premium);
-      break;
+      return analyzeBlinkCciHhll(candles, settings as BlinkSettings, spot, strike, premium);
     case 'ema_rsi':
-      sig = analyzeBlinkEmaRsi(candles, settings, spot, strike, premium);
-      break;
-    default:
-      sig = analyzeBlinkFromCatalog(
+      return analyzeBlinkEmaRsi(candles, settings, spot, strike, premium);
+    case 'nifty_pa_3m': {
+      const profile = analyzeNiftyPaProfile(
         candles,
-        blinkStrategyCatalogId(settings.strategyMode),
+        settings as BlinkSettings,
+        spot,
+        premium
+      );
+      return profile.signal;
+    }
+    case 'orb':
+      return analyzeBlinkFromCatalog(candles, 'orb', settings, spot, strike, premium);
+    default:
+      return analyzeBlinkFromCatalog(
+        candles,
+        blinkStrategyCatalogId(mode),
         settings,
         spot,
         strike,
         premium
       );
   }
+}
+
+export function analyzeBlinkScalp(
+  candles: Candle[],
+  settings: Pick<
+    BlinkSettings,
+    | 'strategyMode'
+    | 'strategyMode2'
+    | 'strategyCombine'
+    | 'emaFast'
+    | 'emaSlow'
+    | 'rsiPeriod'
+    | 'rsiCeMin'
+    | 'rsiCeMax'
+    | 'rsiPeMin'
+    | 'rsiPeMax'
+    | 'minConfidence'
+    | 'cciPeriod'
+    | 'cciOversold'
+    | 'cciOverbought'
+    | 'paLeftBars'
+    | 'paRightBars'
+    | 'strikeMoneyness'
+    | 'symbol'
+    | 'orbMinutes'
+    | 'paLessonFocus'
+  >,
+  liveSpot?: number,
+  livePremium?: number | null
+): BlinkSignal {
+  const spot = liveSpot ?? candles[candles.length - 1]?.close ?? 24850;
+  const strikeStep = blinkStrikeStep(settings.symbol ?? 'NIFTY', spot);
+  const strike = roundStrike(spot, strikeStep);
+  const premium = livePremium != null && livePremium > 0 ? livePremium : 0;
+
+  const modes = activeBlinkStrategies(settings);
+  let sig: BlinkSignal;
+  if (modes.length === 1) {
+    sig = analyzeBlinkSingleStrategy(modes[0], candles, settings, spot, strike, premium);
+  } else {
+    const parts = modes.map((m) =>
+      analyzeBlinkSingleStrategy(m, candles, settings, spot, strike, premium)
+    );
+    sig = mergeBlinkStrategySignals(
+      parts,
+      settings.strategyCombine ?? 'all',
+      settings.minConfidence,
+      spot,
+      strike,
+      premium
+    );
+  }
 
   if (sig.bias === 'CE' || sig.bias === 'PE') {
-    const s = settings as BlinkSettings;
     sig = {
       ...sig,
-      strike: pickOptionStrike(sig.niftySpot, sig.bias, s.strikeMoneyness ?? 'atm'),
+      strike: pickOptionStrike(
+        sig.niftySpot,
+        sig.bias,
+        settings.strikeMoneyness ?? 'atm',
+        strikeStep
+      ),
     };
   }
   return sig;

@@ -115,7 +115,7 @@ export default function AdminConsole() {
           </h1>
           <InfoBubble title="About Admin">
             Signed in as <strong className="text-sky-ink">{user?.name}</strong> (admin). Manage everyone
-            who creates an account on TradeMind Pro.
+            who creates an account on TradePinax.
           </InfoBubble>
         </div>
       </div>

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import TradePinaxLogo from '@/components/app/TradePinaxLogo';
 import { useAuth } from '@/components/auth/AuthProvider';
 
 export default function LoginForm() {
@@ -34,8 +35,8 @@ export default function LoginForm() {
     <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(165deg,#ffffff_0%,#f4f9fd_45%,#dceef8_100%)] px-4 py-10">
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
-          <Link href="/" className="font-display text-2xl font-semibold text-sky-ink">
-            TradeMind<span className="text-sky-deep"> Pro</span>
+          <Link href="/" aria-label="TradePinax home" className="inline-flex">
+            <TradePinaxLogo height={62} priority />
           </Link>
           <p className="mt-2 text-sm text-sky-ink/55">Log in to your trading OS</p>
           {cloudEnabled && (

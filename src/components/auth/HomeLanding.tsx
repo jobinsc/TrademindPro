@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { ArrowRight } from 'lucide-react';
-import TradeMindLogo from '@/components/app/TradeMindLogo';
+import TradePinaxLogo from '@/components/app/TradePinaxLogo';
 import { useAuth } from '@/components/auth/AuthProvider';
 function AuthPanel({ mode }: { mode: 'login' | 'signup' }) {
   const { login, signup, cloudEnabled } = useAuth();
@@ -38,10 +38,10 @@ function AuthPanel({ mode }: { mode: 'login' | 'signup' }) {
         {mode === 'login' ? 'Log in' : 'Create account'}
       </p>
       <h2 className="mt-1 font-display text-xl font-bold text-sky-ink">
-        {mode === 'login' ? 'Welcome back' : 'Join TradeMind Pro'}
+        {mode === 'login' ? 'Welcome back' : 'Join TradePinax'}
       </h2>
       <p className="mt-1 text-sm text-sky-ink/55">
-        You are on the official TradeMind Pro home page — continue below.
+        You are on the official TradePinax home page — continue below.
       </p>
       {cloudEnabled && (
         <p className="mt-2 text-[12px] font-medium text-emerald-700">
@@ -157,16 +157,8 @@ function HomeInner() {
     <div className="flex min-h-screen flex-col bg-white text-sky-ink">
       <header className="absolute inset-x-0 top-0 z-20">
         <nav className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5 md:px-8">
-          <Link href="/" className="flex items-center gap-2.5">
-            <TradeMindLogo size={34} />
-            <div className="leading-none">
-              <p className="font-display text-lg font-bold tracking-tight text-[#0F2A3D] md:text-xl">
-                TradeMind<span className="text-[#0369A1]"> Pro</span>
-              </p>
-              <p className="mt-1 text-[10px] font-medium text-[#6B8496] md:text-[11px]">
-                For serious Traders
-              </p>
-            </div>
+          <Link href="/" aria-label="TradePinax home" className="flex items-center">
+            <TradePinaxLogo height={44} priority />
           </Link>
           <div className="flex items-center gap-3">
             {ready && user ? (
@@ -218,16 +210,8 @@ function HomeInner() {
         </div>
 
         <div className="relative z-10 mx-auto flex w-full max-w-6xl flex-1 flex-col justify-center px-6 pb-16 pt-28 md:px-8 md:pb-20">
-          <div className="animate-fade-up flex items-center gap-4 md:gap-5">
-            <TradeMindLogo size={56} />
-            <div>
-              <p className="font-display text-4xl font-bold tracking-tight text-[#0F2A3D] sm:text-5xl md:text-6xl lg:text-7xl">
-                TradeMind<span className="text-[#0369A1]"> Pro</span>
-              </p>
-              <p className="mt-2 text-sm font-medium text-[#6B8496] sm:text-base md:mt-3 md:text-lg">
-                For serious Traders
-              </p>
-            </div>
+          <div className="animate-fade-up">
+            <TradePinaxLogo height={100} priority />
           </div>
           <h1 className="animate-fade-up animate-delay-1 mt-6 max-w-2xl font-display text-2xl font-medium leading-snug tracking-tight text-sky-ink/90 sm:text-3xl md:text-4xl">
             The complete AI trading operating system for Indian markets.
@@ -272,12 +256,9 @@ function HomeInner() {
       <footer className="relative z-10 border-t border-[#cfe0ee]/70 bg-white/90 px-6 py-8 backdrop-blur-sm md:px-8">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 text-sm text-sky-ink/50 sm:flex-row">
           <div className="flex items-center gap-2">
-            <TradeMindLogo size={24} />
-            <p className="font-display font-semibold text-[#0F2A3D]">
-              TradeMind<span className="text-[#0369A1]"> Pro</span>
-            </p>
+            <TradePinaxLogo height={30} />
           </div>
-          <p>© {new Date().getFullYear()} TradeMind Pro. For serious Traders.</p>
+          <p>© {new Date().getFullYear()} TradePinax. Evidence. Discipline. Edge.</p>
         </div>
       </footer>
     </div>
@@ -289,7 +270,7 @@ export default function HomeLanding() {
     <Suspense
       fallback={
         <div className="flex min-h-screen items-center justify-center bg-sky-soft text-sm text-sky-ink/50">
-          Loading TradeMind Pro…
+          Loading TradePinax…
         </div>
       }
     >

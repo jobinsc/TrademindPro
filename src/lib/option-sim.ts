@@ -8,24 +8,25 @@ import { roundPremium } from '@/lib/paper-exit';
 export type OptionMoneyness = 'atm' | 'itm' | 'otm';
 export type OptionSide = 'CE' | 'PE';
 
-const STRIKE_STEP = 50;
+const DEFAULT_STRIKE_STEP = 50;
 
-export function roundStrike(spot: number): number {
-  return Math.round(spot / STRIKE_STEP) * STRIKE_STEP;
+export function roundStrike(spot: number, strikeStep = DEFAULT_STRIKE_STEP): number {
+  return Math.round(spot / strikeStep) * strikeStep;
 }
 
 /** Pick strike from spot, side, and moneyness */
 export function pickOptionStrike(
   spot: number,
   side: OptionSide,
-  moneyness: OptionMoneyness = 'atm'
+  moneyness: OptionMoneyness = 'atm',
+  strikeStep = DEFAULT_STRIKE_STEP
 ): number {
-  const atm = roundStrike(spot);
+  const atm = roundStrike(spot, strikeStep);
   if (moneyness === 'atm') return atm;
   if (side === 'CE') {
-    return moneyness === 'itm' ? atm - STRIKE_STEP : atm + STRIKE_STEP;
+    return moneyness === 'itm' ? atm - strikeStep : atm + strikeStep;
   }
-  return moneyness === 'itm' ? atm + STRIKE_STEP : atm - STRIKE_STEP;
+  return moneyness === 'itm' ? atm + strikeStep : atm - strikeStep;
 }
 
 /** Minutes since 09:15 IST (cash open) */

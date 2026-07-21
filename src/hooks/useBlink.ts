@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   analyzeBlinkScalp,
   BLINK_NAME,
+  blinkDefaultLotSize,
+  blinkDefaultBrokerage,
+  blinkSupportsLiveOptions,
   buildBlinkCandles,
   canOpenBlinkTrade,
   closeBlinkPaper,
@@ -37,7 +40,9 @@ type LiveOptQuote = {
   error?: string;
 };
 
-async function fetchLiveNiftySpot(): Promise<{ ok: boolean; spot: number }> {
+async function fetchLiveSpot(
+  symbol: string
+): Promise<{ ok: boolean; spot: number }> {
   const token = getUpstoxAccessToken();
   try {
     const res = await fetch('/api/market/live', {
@@ -46,21 +51,22 @@ async function fetchLiveNiftySpot(): Promise<{ ok: boolean; spot: number }> {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ symbols: [{ symbol: 'NIFTY', exchange: 'NSE' }] }),
+      body: JSON.stringify({ symbols: [{ symbol, exchange: 'NSE' }] }),
       cache: 'no-store',
     });
     const data = (await res.json()) as {
       quotes?: { symbol: string; lastPrice: number; ok: boolean }[];
     };
-    const q = data.quotes?.find((x) => x.symbol === 'NIFTY' && x.ok);
+    const q = data.quotes?.find((x) => x.symbol === symbol && x.ok);
     if (q?.lastPrice) return { ok: true, spot: q.lastPrice };
   } catch {
     /* fall through */
   }
   try {
-    const res = await fetch('/api/market/candles?symbol=NIFTY&interval=1m&limit=5', {
-      cache: 'no-store',
-    });
+    const res = await fetch(
+      `/api/market/candles?symbol=${encodeURIComponent(symbol)}&interval=1m&limit=5`,
+      { cache: 'no-store' }
+    );
     const data = (await res.json()) as { ok?: boolean; spot?: number };
     if (data.ok && data.spot) return { ok: true, spot: data.spot };
   } catch {
@@ -70,11 +76,12 @@ async function fetchLiveNiftySpot(): Promise<{ ok: boolean; spot: number }> {
 }
 
 async function fetchBlinkCandles(
+  symbol: string,
   interval: string
 ): Promise<{ ok: boolean; candles: Candle[]; spot: number }> {
   try {
     const res = await fetch(
-      `/api/market/candles?symbol=NIFTY&interval=${encodeURIComponent(interval)}&limit=120`,
+      `/api/market/candles?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=120`,
       { cache: 'no-store' }
     );
     const data = (await res.json()) as {
@@ -156,8 +163,19 @@ function read(): BlinkState {
     const raw = localStorage.getItem(KEY);
     if (!raw) return empty();
     const p = JSON.parse(raw) as Partial<BlinkState>;
+    const sym = String(p.settings?.symbol || 'NIFTY');
+    const merged = { ...defaultBlinkSettings(), ...p.settings };
+    if (!merged.paLessonFocus) merged.paLessonFocus = 'all';
+    if (sym === 'NIFTY' && (merged.lotSize ?? 0) < 10) merged.lotSize = 65;
+    if (sym !== 'NIFTY' && (merged.lotSize ?? 0) > 10) merged.lotSize = 1;
+    if (sym !== 'NIFTY' && (merged.brokeragePerLot ?? 0) > 50) {
+      merged.brokeragePerLot = blinkDefaultBrokerage(sym, merged.lotSize);
+    }
+    if (sym === 'NIFTY' && (merged.brokeragePerLot ?? 0) < 50) {
+      merged.brokeragePerLot = blinkDefaultBrokerage('NIFTY', merged.lotSize);
+    }
     return {
-      settings: { ...defaultBlinkSettings(), ...p.settings },
+      settings: merged,
       signal: p.signal ?? null,
       spot: p.spot ?? 24850,
       candles: Array.isArray(p.candles) ? p.candles : [],
@@ -239,12 +257,15 @@ export function useBlink() {
   }, []);
 
   const refreshLiveSignal = useCallback(async (state: BlinkState) => {
-    const candleRes = await fetchBlinkCandles(state.settings.chartTimeframe || '1m');
+    const isPaProfile = state.settings.strategyMode === 'nifty_pa_3m';
+    const sym = isPaProfile ? 'NIFTY' : state.settings.symbol || 'NIFTY';
+    const interval = isPaProfile ? '3m' : state.settings.chartTimeframe || '1m';
+    const candleRes = await fetchBlinkCandles(sym, interval);
     let nextCandles = candleRes.candles;
     let liveSpot = candleRes.spot;
 
     if (!candleRes.ok) {
-      const spotRes = await fetchLiveNiftySpot();
+      const spotRes = await fetchLiveSpot(sym);
       if (spotRes.ok) liveSpot = spotRes.spot;
       nextCandles =
         state.candles.length >= 25
@@ -254,7 +275,11 @@ export function useBlink() {
 
     let sig = analyzeBlinkScalp(nextCandles, state.settings, liveSpot || undefined);
 
-    if (sig.bias !== 'FLAT' && isUpstoxConnected()) {
+    if (
+      sig.bias !== 'FLAT' &&
+      isUpstoxConnected() &&
+      blinkSupportsLiveOptions(sym)
+    ) {
       const live = await fetchLiveOptionPremium({
         spot: sig.niftySpot,
         option: sig.bias,
@@ -700,6 +725,7 @@ export function useBlink() {
     settings,
     signal,
     spot,
+    candles,
     trades,
     events,
     chat,

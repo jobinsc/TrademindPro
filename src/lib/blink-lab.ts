@@ -1,10 +1,36 @@
 import type { Candle } from '@/lib/nejoic';
 import type { BlinkStrategyMode } from '@/lib/blink';
-import { blinkTimeframeLabel } from '@/lib/blink';
+import { blinkTimeframeLabel, defaultBlinkSettings } from '@/lib/blink';
 import { timeframeNote } from '@/lib/strategy-catalog';
 import { runOptionsPremiumBacktest } from '@/lib/blink-options-backtest';
 import type { OptionMoneyness } from '@/lib/option-sim';
 import { TRADE_WINDOW_PRESETS } from '@/lib/option-sim';
+
+function labBlinkSettings(strategyMode: BlinkStrategyMode, strikeMoneyness: OptionMoneyness) {
+  const d = defaultBlinkSettings();
+  return {
+    strategyMode,
+    strategyMode2: 'none' as const,
+    strategyCombine: 'all' as const,
+    minConfidence: d.minConfidence,
+    emaFast: d.emaFast,
+    emaSlow: d.emaSlow,
+    rsiPeriod: d.rsiPeriod,
+    rsiCeMin: d.rsiCeMin,
+    rsiCeMax: d.rsiCeMax,
+    rsiPeMin: d.rsiPeMin,
+    rsiPeMax: d.rsiPeMax,
+    cciPeriod: d.cciPeriod,
+    cciOversold: d.cciOversold,
+    cciOverbought: d.cciOverbought,
+    paLeftBars: d.paLeftBars,
+    paRightBars: d.paRightBars,
+    strikeMoneyness,
+    symbol: 'NIFTY',
+    orbMinutes: d.orbMinutes ?? 5,
+    paLessonFocus: d.paLessonFocus ?? 'all',
+  };
+}
 
 export type BlinkPlainReport = {
   headline: string;
@@ -137,11 +163,11 @@ export function defaultBlinkLabGoals(): BlinkLabGoals {
   };
 }
 
-/** Yahoo history limits — 1m only has ~7 days */
+/** Yahoo history limits — 1m ~7d, 2m/3m ~10d; 5m+ up to 30d */
 export function blinkLabEffectiveDays(timeframe: string, requested: number): number {
   if (timeframe === '1m') return Math.min(requested, 7);
   if (timeframe === '2m' || timeframe === '3m') return Math.min(requested, 10);
-  return requested;
+  return Math.min(requested, 30);
 }
 
 export function blinkLabTimeframeNote(timeframe: string): string | undefined {
@@ -217,7 +243,9 @@ export function runBlinkLabPermutations(
             if (tg < sl * 0.75) continue;
 
             const run = runOptionsPremiumBacktest(candles, {
-              strategyId: strat.id,
+              symbol: 'NIFTY',
+              strikeStep: 50,
+              blinkSettings: labBlinkSettings(strat.blinkMode, money),
               fromDate,
               toDate,
               stopLossPremium: sl,

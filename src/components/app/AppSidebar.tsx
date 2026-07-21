@@ -35,7 +35,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/components/auth/AuthProvider';
-import TradeMindLogo from '@/components/app/TradeMindLogo';
+import TradePinaxLogo from '@/components/app/TradePinaxLogo';
 import { hrefWithFrom } from '@/lib/nav-return';
 
 type NavItem = {
@@ -116,13 +116,14 @@ const navGroups: NavGroup[] = [
         href: '/app/blink',
         label: 'Blink (Scalp)',
         icon: Zap,
-        exact: true,
-      },
-      {
-        href: '/app/blink/results',
-        label: 'Blink Results',
-        icon: Zap,
-        exact: true,
+        children: [
+          {
+            href: '/app/blink/results',
+            label: 'Blink Results',
+            icon: LineChart,
+            exact: true,
+          },
+        ],
       },
       {
         href: '/app/telegram',
@@ -197,6 +198,11 @@ export default function AppSidebar({
     return pathname === href || pathname.startsWith(`${href}/`);
   };
 
+  const itemActive = (item: NavItem) => {
+    if (isActive(item.href, item.exact)) return true;
+    return item.children?.some((child) => isActive(child.href, child.exact)) ?? false;
+  };
+
   useEffect(() => {
     setOpenMenus((prev) => {
       const next = { ...prev };
@@ -241,35 +247,34 @@ export default function AppSidebar({
   return (
     <aside
       className={cn(
-        'flex h-dvh min-w-[72px] shrink-0 flex-col border-r border-[#c5dcec] transition-[width] duration-200',
+        'flex h-dvh min-h-0 min-w-[72px] shrink-0 flex-col border-r border-[#c5dcec] transition-[width] duration-200',
         'bg-[linear-gradient(180deg,#eaf6fc_0%,#f5fbfe_48%,#e8f4fb_100%)]',
         collapsed ? 'w-[72px]' : 'w-[250px]',
         variant === 'mobile' && 'w-[280px] max-w-[85vw]'
       )}
     >
-      {/* Brand — name only, no caption */}
-      <div className="border-b border-[#d5e6f0] bg-white px-3 py-3">
-        <div className={cn('flex items-center gap-2', collapsed && 'flex-col')}>
+      {/* Brand */}
+      <div className="shrink-0 border-b border-[#d5e6f0] bg-white px-3 py-3">
+        <div
+          className={cn(
+            'flex items-center',
+            collapsed ? 'flex-col gap-2' : 'gap-2'
+          )}
+        >
           <Link
             href="/app"
             onClick={() => onNavigate?.()}
+            title="TradePinax"
             className={cn(
-              'flex min-w-0 flex-1 items-center gap-3',
-              collapsed && 'justify-center'
+              'flex min-w-0 items-center gap-3',
+              collapsed ? 'justify-center' : 'flex-1'
             )}
           >
-            <TradeMindLogo size={collapsed ? 34 : 38} />
-            {!collapsed && (
-              <div className="min-w-0">
-                <p className="truncate font-display text-[18px] font-bold leading-none tracking-tight text-[#0F2A3D]">
-                  TradeMind
-                  <span className="text-[#0369A1]"> Pro</span>
-                </p>
-                <p className="mt-1.5 truncate text-[11px] font-medium leading-none text-[#6B8496]">
-                  For serious Traders
-                </p>
-              </div>
-            )}
+            <TradePinaxLogo
+              variant={collapsed ? 'mark' : 'wordmark'}
+              height={collapsed ? 38 : 48}
+              priority
+            />
           </Link>
           {onToggleCollapse && (
             <button
@@ -282,7 +287,10 @@ export default function AppSidebar({
                     ? 'Expand sidebar'
                     : 'Collapse sidebar'
               }
-              className="rounded-lg p-1.5 text-[#0369A1] transition hover:bg-[#eef6fb]"
+              className={cn(
+                'shrink-0 rounded-lg p-1.5 text-[#0369A1] transition hover:bg-[#eef6fb]',
+                collapsed && 'mx-auto'
+              )}
             >
               {variant === 'mobile' ? (
                 <X className="h-4 w-4" strokeWidth={2} />
@@ -312,7 +320,7 @@ export default function AppSidebar({
         </div>
       )}
 
-      <nav className="mt-3 flex-1 space-y-4 overflow-y-auto overscroll-contain px-2 pb-4">
+      <nav className="mt-3 min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-2 pb-4">
         {visibleGroups.map((group) => (
           <div key={group.title}>
             {!collapsed && (
@@ -332,7 +340,7 @@ export default function AppSidebar({
                           href={item.href}
                           label={item.label}
                           icon={item.icon}
-                          active={isActive(item.href, item.exact)}
+                          active={itemActive(item)}
                           collapsed={collapsed}
                           onNavigate={onNavigate}
                         />
@@ -378,7 +386,7 @@ export default function AppSidebar({
         ))}
       </nav>
 
-      <div className="space-y-0.5 border-t border-[#c5dcec]/80 px-2 py-3">
+      <div className="shrink-0 space-y-0.5 border-t border-[#c5dcec]/80 px-2 py-3">
         <NavLink
           href="/app/settings"
           label="Settings & Brokers"

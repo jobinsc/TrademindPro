@@ -35,6 +35,7 @@ import {
   Zap,
   Anvil,
   Radio,
+  Coins,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/components/auth/AuthProvider';
@@ -167,6 +168,12 @@ const navGroups: NavGroup[] = [
             adminOnly: true,
           },
         ],
+      },
+      {
+        href: '/app/gold-pulse',
+        label: 'GoldPulse (Intl)',
+        icon: Coins,
+        exact: true,
       },
       {
         href: '/app/telegram',

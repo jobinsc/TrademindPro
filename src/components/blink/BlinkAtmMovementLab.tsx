@@ -10,7 +10,7 @@ import {
   detectFastScalpScenarios,
   estimatedNetOptionPoints,
   isExpiryObservationDay,
-  mapCriticalLevels,
+  mapLevelsWithPriorContext,
   observationCutoffReached,
   replayBreakEvents,
   summarizeMovement,
@@ -21,6 +21,11 @@ import {
   type CriticalLevel,
   type FastScalpReadiness,
 } from '@/lib/blink-atm-movement';
+import {
+  buildAtmBlinkBrief,
+  type AtmBlinkBrief,
+} from '@/lib/blink-atm-blink-brief';
+import { splitTodayCandles } from '@/lib/blink-atm-trader-context';
 
 type ApiResult = {
   ok: boolean;
@@ -30,11 +35,72 @@ type ApiResult = {
   saved?: number;
 };
 
+type LabLinkStatus = 'idle' | 'open' | 'live' | 'offline' | 'closed';
+
+type LocalAtmBackup = {
+  date: string;
+  keys: AtmMovementInit['keys'];
+  strike: number;
+  runId?: string;
+  samples: AtmMovementSample[];
+  pending: AtmMovementSample[];
+  events: AtmBreakEvent[];
+  savedAt: string;
+  summary: ReturnType<typeof summarizeMovement>;
+};
+
+const LOCAL_BACKUP_KEY = 'tradepinax.atm-lab.backup';
+
+function notifyLab(title: string, body: string) {
+  try {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    if (Notification.permission === 'granted') {
+      new Notification(title, { body, silent: false });
+    } else if (Notification.permission === 'default') {
+      void Notification.requestPermission().then((perm) => {
+        if (perm === 'granted') new Notification(title, { body });
+      });
+    }
+  } catch {
+    /* notifications are optional */
+  }
+}
+
+function writeLocalBackup(backup: LocalAtmBackup) {
+  try {
+    // Keep last 4k samples in browser so a crash does not wipe the morning.
+    const slim: LocalAtmBackup = {
+      ...backup,
+      samples: backup.samples.slice(-4000),
+      pending: backup.pending.slice(-1500),
+      events: backup.events.slice(-500),
+    };
+    localStorage.setItem(LOCAL_BACKUP_KEY, JSON.stringify(slim));
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+function readLocalBackup(): LocalAtmBackup | null {
+  try {
+    const raw = localStorage.getItem(LOCAL_BACKUP_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as LocalAtmBackup;
+  } catch {
+    return null;
+  }
+}
+
 export function BlinkAtmMovementLab() {
   const [running, setRunning] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('Ready to observe. No order API is used.');
+  const [notice, setNotice] = useState(
+    'Ready. Start observation — OPEN/LIVE/OFFLINE status will notify clearly.'
+  );
+  const [linkStatus, setLinkStatus] = useState<LabLinkStatus>('idle');
+  const [lastBeatAt, setLastBeatAt] = useState<string | null>(null);
+  const [savedCount, setSavedCount] = useState(0);
   const [session, setSession] = useState<AtmMovementInit | null>(null);
   const [samples, setSamples] = useState<AtmMovementSample[]>([]);
   const [levels, setLevels] = useState<CriticalLevel[]>([]);
@@ -48,16 +114,30 @@ export function BlinkAtmMovementLab() {
   const eventsRef = useRef<AtmBreakEvent[]>([]);
   const saveQueueRef = useRef<AtmMovementSample[]>([]);
   const savingRef = useRef(false);
+  const fetchFailRef = useRef(0);
+  const wasOfflineRef = useRef(false);
+  const linkStatusRef = useRef<LabLinkStatus>('idle');
+  const savedCountRef = useRef(0);
 
   const latest = samples[samples.length - 1] ?? null;
   const minuteBars = useMemo(() => buildOneMinuteCandles(samples), [samples]);
   const summary = useMemo(() => summarizeMovement(events), [events]);
+  const blinkBrief = useMemo(
+    () =>
+      buildAtmBlinkBrief(
+        samples,
+        levels,
+        session?.candles ?? [],
+        session?.traderContext ?? null
+      ),
+    [samples, levels, session?.candles, session?.traderContext]
+  );
   const ceReadiness = useMemo(
-    () => latest ? assessFastScalpReadiness(latest, 'CE') : null,
+    () => (latest ? assessFastScalpReadiness(latest, 'CE') : null),
     [latest]
   );
   const peReadiness = useMemo(
-    () => latest ? assessFastScalpReadiness(latest, 'PE') : null,
+    () => (latest ? assessFastScalpReadiness(latest, 'PE') : null),
     [latest]
   );
   const expiryDay = session
@@ -65,43 +145,108 @@ export function BlinkAtmMovementLab() {
       isExpiryObservationDay(session.date, session.contracts.ce.expiry)
     : false;
 
-  async function callApi(body: object): Promise<ApiResult> {
+  function setLink(next: LabLinkStatus, message?: string) {
+    linkStatusRef.current = next;
+    setLinkStatus(next);
+    if (message) setNotice(message);
+  }
+
+  function snapshotBackup(extraPending: AtmMovementSample[] = []) {
+    const active = sessionRef.current;
+    if (!active) return;
+    const pending = [...saveQueueRef.current, ...extraPending];
+    writeLocalBackup({
+      date: active.date,
+      keys: active.keys,
+      strike: active.contracts.ce.strike,
+      runId: active.sample.runId,
+      samples: samplesRef.current,
+      pending,
+      events: eventsRef.current,
+      savedAt: new Date().toISOString(),
+      summary: summarizeMovement(eventsRef.current),
+    });
+  }
+
+  async function callApi(body: object): Promise<ApiResult & Partial<AtmMovementInit>> {
     const token = getUpstoxAccessToken();
     if (!token) throw new Error('Reconnect Upstox before starting observation.');
-    const res = await fetch('/api/blink/atm-movement', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(body),
-    });
-    const data = (await res.json()) as ApiResult;
+    let res: Response;
+    try {
+      res = await fetch('/api/blink/atm-movement', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(body),
+      });
+    } catch {
+      throw new Error(
+        'LOCAL SERVER OFFLINE (Failed to fetch). In Cursor: open Terminal → run npm run live → leave that tab open.'
+      );
+    }
+    const data = (await res.json()) as ApiResult & Partial<AtmMovementInit>;
     if (!res.ok || !data.ok) {
       throw new Error(data.error || `ATM Movement Lab request failed (${res.status})`);
     }
     return data;
   }
 
-  async function flushSamples() {
-    if (savingRef.current || !saveQueueRef.current.length) return;
+  async function flushSamples(reason = 'periodic') {
+    if (savingRef.current || !saveQueueRef.current.length) {
+      snapshotBackup();
+      return;
+    }
     const active = sessionRef.current;
     if (!active) return;
     const batch = saveQueueRef.current.splice(0, 300);
     savingRef.current = true;
+    snapshotBackup();
     try {
-      await callApi({
+      const result = await callApi({
         action: 'save',
         date: active.date,
         samples: batch,
       });
-      setNotice(`Saved ${batch.length} synchronized samples locally.`);
+      const n = result.saved ?? batch.length;
+      savedCountRef.current += n;
+      setSavedCount(savedCountRef.current);
+      snapshotBackup();
+      if (reason !== 'periodic') {
+        setNotice(`Saved ${n} samples (${reason}). Total saved this run: ${savedCountRef.current}.`);
+      }
     } catch (err) {
+      // Keep data — put batch back and rely on browser backup until server returns.
       saveQueueRef.current.unshift(...batch);
+      snapshotBackup();
       setError(err instanceof Error ? err.message : 'Could not save samples');
     } finally {
       savingRef.current = false;
     }
+  }
+
+  async function flushPendingFromBackup() {
+    const backup = readLocalBackup();
+    const active = sessionRef.current;
+    if (!backup?.pending?.length || !active) return 0;
+    if (
+      backup.date !== active.date ||
+      backup.keys.ce !== active.keys.ce ||
+      backup.keys.pe !== active.keys.pe
+    ) {
+      return 0;
+    }
+    // Merge any leftover pending into the live queue (dedupe by timestamp).
+    const seen = new Set(saveQueueRef.current.map((s) => s.at));
+    for (const sample of backup.pending) {
+      if (!seen.has(sample.at)) {
+        saveQueueRef.current.push(sample);
+        seen.add(sample.at);
+      }
+    }
+    await flushSamples('resume-after-offline');
+    return backup.pending.length;
   }
 
   function applySample(sample: AtmMovementSample) {
@@ -126,7 +271,42 @@ export function BlinkAtmMovementLab() {
     samplesRef.current = nextSamples;
     setSamples(nextSamples);
     saveQueueRef.current.push(sample);
-    if (saveQueueRef.current.length >= 30) void flushSamples();
+    setLastBeatAt(sample.at);
+    snapshotBackup();
+    if (saveQueueRef.current.length >= 10) void flushSamples('batch');
+  }
+
+  async function handleOffline(message: string) {
+    fetchFailRef.current += 1;
+    wasOfflineRef.current = true;
+    snapshotBackup();
+    // Try one emergency server save; if it fails, browser backup already holds results.
+    await flushSamples('emergency-offline');
+    setError(message);
+    setLink(
+      'offline',
+      `ATM LAB OFFLINE — previous results saved locally (${samplesRef.current.length} samples, ${eventsRef.current.length} events). Auto-retry ${fetchFailRef.current}…`
+    );
+    if (fetchFailRef.current === 1 || fetchFailRef.current % 5 === 0) {
+      notifyLab(
+        'ATM Lab OFFLINE',
+        `Saved ${samplesRef.current.length} samples locally. Waiting for server…`
+      );
+    }
+  }
+
+  async function handleOnlineAgain() {
+    if (!wasOfflineRef.current) return;
+    wasOfflineRef.current = false;
+    const pending = await flushPendingFromBackup();
+    setLink(
+      'live',
+      `ATM LAB BACK ONLINE — restored/continued. Flushed ${pending} pending samples. Saving continues.`
+    );
+    notifyLab(
+      'ATM Lab OPEN again',
+      `Back online. Continued from saved results (${samplesRef.current.length} samples).`
+    );
   }
 
   async function poll() {
@@ -135,8 +315,10 @@ export function BlinkAtmMovementLab() {
     if (observationCutoffReached(new Date().toISOString())) {
       runningRef.current = false;
       setRunning(false);
-      setNotice('Stopped automatically at the 15:15 IST observation cutoff.');
-      await flushSamples();
+      await flushSamples('session-cutoff');
+      snapshotBackup();
+      setLink('closed', 'ATM LAB CLOSED — 15:15 IST cutoff. All queued samples flushed.');
+      notifyLab('ATM Lab CLOSED', 'Stopped at 15:15 IST. Results saved.');
       return;
     }
 
@@ -150,13 +332,31 @@ export function BlinkAtmMovementLab() {
       if (result.sample) {
         applySample({ ...result.sample, latencyMs: result.latencyMs });
         setError('');
+        fetchFailRef.current = 0;
+        if (linkStatusRef.current !== 'live') {
+          await handleOnlineAgain();
+          setLink('live');
+        } else {
+          setLinkStatus('live');
+          linkStatusRef.current = 'live';
+        }
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Live sample failed');
-    } finally {
       if (runningRef.current) {
         timerRef.current = window.setTimeout(() => void poll(), 1000);
       }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Live sample failed';
+      const offline = message.includes('LOCAL SERVER OFFLINE');
+      if (offline) await handleOffline(message);
+      else {
+        setError(message);
+        snapshotBackup();
+      }
+      if (!runningRef.current) return;
+      timerRef.current = window.setTimeout(
+        () => void poll(),
+        offline ? Math.min(10000, 2000 * Math.max(1, fetchFailRef.current)) : 1000
+      );
     }
   }
 
@@ -164,28 +364,35 @@ export function BlinkAtmMovementLab() {
     if (runningRef.current || loading) return;
     setLoading(true);
     setError('');
-    setNotice('Locking current-week ATM CE/PE and loading today’s 1-minute levels…');
+    setLink('open', 'ATM LAB OPENING — locking ATM + loading prior 3 sessions…');
     try {
-      const token = getUpstoxAccessToken();
-      if (!token) throw new Error('Reconnect Upstox before starting observation.');
-      const res = await fetch('/api/blink/atm-movement', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ action: 'init' }),
-      });
-      const data = (await res.json()) as AtmMovementInit;
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error || `Initialization failed (${res.status})`);
+      const data = (await callApi({ action: 'init' })) as AtmMovementInit;
+      if (!data.ok) {
+        throw new Error(data.error || 'Initialization failed');
       }
       if (observationCutoffReached(data.sample.at)) {
         throw new Error('Observation cutoff reached (15:15 IST). Start next session.');
       }
 
-      const frozenLevels = mapCriticalLevels(data.candles || []);
-      const restored = (data.savedSamples || []).filter(
+      const { today } = splitTodayCandles(data.candles || [], data.date);
+      const frozenLevels = mapLevelsWithPriorContext(
+        today.length ? today : data.candles || [],
+        data.traderContext
+      );
+
+      const local = readLocalBackup();
+      const localMatches =
+        local &&
+        local.date === data.date &&
+        local.keys.ce === data.keys.ce &&
+        local.keys.pe === data.keys.pe
+          ? local
+          : null;
+
+      const restored = [
+        ...(data.savedSamples || []),
+        ...(localMatches?.samples || []),
+      ].filter(
         (sample) =>
           sample.ceKey === data.keys.ce &&
           sample.peKey === data.keys.pe &&
@@ -208,19 +415,38 @@ export function BlinkAtmMovementLab() {
       samplesRef.current = initialSamples;
       levelsRef.current = frozenLevels;
       eventsRef.current = restoredEvents;
-      saveQueueRef.current = [data.sample];
+      saveQueueRef.current = [
+        ...(localMatches?.pending || []),
+        data.sample,
+      ];
+      fetchFailRef.current = 0;
+      wasOfflineRef.current = false;
+      savedCountRef.current = 0;
+      setSavedCount(0);
       setSession(data);
       setSamples(initialSamples);
       setLevels(frozenLevels);
       setEvents(restoredEvents);
+      setLastBeatAt(data.sample.at);
       runningRef.current = true;
       setRunning(true);
-      setNotice(
-        `Locked ${data.contracts.ce.strike} CE/PE · ${data.expiryMode.replace('_', ' ')} · ${restored.length} prior matching samples restored.`
+      snapshotBackup();
+      await flushSamples('open');
+
+      const days = data.traderContext?.priorDays?.length ?? 0;
+      setLink(
+        'live',
+        `ATM LAB OPEN · LIVE — ${data.contracts.ce.strike} CE/PE · restored ${initialSamples.length} samples (${localMatches ? 'server+browser' : 'server'}) · ${days} prior sessions`
+      );
+      notifyLab(
+        'ATM Lab OPEN',
+        `Watching ${data.contracts.ce.strike} CE/PE. Restored ${initialSamples.length} samples.`
       );
       timerRef.current = window.setTimeout(() => void poll(), 1000);
     } catch (err) {
+      setLink('closed');
       setError(err instanceof Error ? err.message : 'Could not start observation');
+      notifyLab('ATM Lab failed to open', err instanceof Error ? err.message : 'Start failed');
     } finally {
       setLoading(false);
     }
@@ -231,18 +457,43 @@ export function BlinkAtmMovementLab() {
     setRunning(false);
     if (timerRef.current != null) window.clearTimeout(timerRef.current);
     timerRef.current = null;
-    setNotice('Observation stopped. Flushing unsaved samples…');
-    await flushSamples();
-    setNotice('Observation stopped. Samples are saved; no order was placed.');
+    setLink('closed', 'ATM LAB CLOSING — flushing and saving all results…');
+    await flushSamples('manual-stop');
+    snapshotBackup();
+    setLink(
+      'closed',
+      `ATM LAB CLOSED — saved. Samples in memory ${samplesRef.current.length}, events ${eventsRef.current.length}, flushed this run ${savedCountRef.current}.`
+    );
+    notifyLab(
+      'ATM Lab CLOSED',
+      `Saved session. ${samplesRef.current.length} samples / ${eventsRef.current.length} events kept.`
+    );
   }
 
   useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') {
+        void Notification.requestPermission();
+      }
+    }
+    const onHide = () => {
+      if (!runningRef.current) return;
+      snapshotBackup();
+      void flushSamples('tab-hidden');
+    };
+    const onUnload = () => {
+      snapshotBackup();
+    };
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('beforeunload', onUnload);
     return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('beforeunload', onUnload);
       runningRef.current = false;
       if (timerRef.current != null) window.clearTimeout(timerRef.current);
-      void flushSamples();
+      snapshotBackup();
+      void flushSamples('unmount');
     };
-    // Run cleanup only on unmount; refs hold the latest observation state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -257,14 +508,36 @@ export function BlinkAtmMovementLab() {
             </h2>
           </div>
           <p className="mt-1 text-[12px] text-sky-ink/55">
-            One-second synchronized Nifty + locked ATM CE/PE observation.
+            One-second Nifty + ATM CE/PE watch · Blink decides STALK/PREPARE before the move.
           </p>
         </div>
-        <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-800">
-          <ShieldCheck className="mr-1 inline h-3.5 w-3.5" />
-          OBSERVATION ONLY — NO ORDERS
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusPill status={linkStatus} lastBeatAt={lastBeatAt} savedCount={savedCount} />
+          <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-800">
+            <ShieldCheck className="mr-1 inline h-3.5 w-3.5" />
+            OBSERVATION ONLY — NO ORDERS
+          </div>
         </div>
       </div>
+
+      {linkStatus === 'offline' ? (
+        <div className="mt-3 rounded-xl border border-rose-400 bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-950">
+          ATM LAB OFFLINE — previous results are saved in browser + disk queue.
+          When the server returns, saving continues automatically from where it stopped.
+        </div>
+      ) : null}
+      {linkStatus === 'open' || linkStatus === 'live' ? (
+        <div className="mt-3 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-[12px] font-semibold text-emerald-950">
+          ATM LAB {linkStatus.toUpperCase()} — heartbeat{' '}
+          {lastBeatAt ? new Date(lastBeatAt).toLocaleTimeString('en-IN') : '…'} · samples{' '}
+          {samples.length} · events {events.length} · flushed {savedCount}
+        </div>
+      ) : null}
+      {linkStatus === 'closed' ? (
+        <div className="mt-3 rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-[12px] font-semibold text-slate-800">
+          ATM LAB CLOSED — results kept. Start again to restore and continue saving.
+        </div>
+      ) : null}
 
       {session ? (
         <div
@@ -282,7 +555,8 @@ export function BlinkAtmMovementLab() {
                 : `Expiry ${session.contracts.ce.expiry}`}
           </strong>
           {' · '}
-          Watching level breaks, failed breaks, Nifty momentum bursts and option-leading moves.
+          Watching levels, EMA/RSI, compression, option-lead tape and chart patterns.
+          Blink prepares CE/PE <em>before</em> the break — confirmation still required.
           {session.rolledFromExpiryDay
             ? ` Avoiding the expiring contract’s severe same-day theta. Watching ${session.contracts.ce.expiry}; lower gamma may make +5/+7 slower.`
             : expiryDay
@@ -310,8 +584,26 @@ export function BlinkAtmMovementLab() {
           <Square className="h-4 w-4" />
           Stop
         </button>
-        <span className={`self-center text-[12px] font-semibold ${running ? 'text-emerald-600' : 'text-sky-ink/45'}`}>
-          {running ? '● LIVE PAPER OBSERVER' : '○ STOPPED'}
+        <span
+          className={`self-center text-[12px] font-semibold ${
+            linkStatus === 'live'
+              ? 'text-emerald-600'
+              : linkStatus === 'offline'
+                ? 'text-rose-600'
+                : linkStatus === 'open'
+                  ? 'text-amber-600'
+                  : 'text-sky-ink/45'
+          }`}
+        >
+          {linkStatus === 'live'
+            ? '● LIVE'
+            : linkStatus === 'offline'
+              ? '● OFFLINE (auto-save on)'
+              : linkStatus === 'open'
+                ? '● OPENING'
+                : linkStatus === 'closed'
+                  ? '○ CLOSED'
+                  : '○ STOPPED'}
         </span>
       </div>
 
@@ -349,6 +641,8 @@ export function BlinkAtmMovementLab() {
           readiness={peReadiness}
         />
       </div>
+
+      <BlinkDecisionPanel brief={blinkBrief} />
 
       <div className="mt-4 grid gap-2 sm:grid-cols-5">
         <Metric label="All scenarios" value={String(summary.events)} />
@@ -415,6 +709,197 @@ export function BlinkAtmMovementLab() {
         available delta, gamma, theta, IV, OI, spread and latency for later analysis.
       </p>
     </section>
+  );
+}
+
+function StatusPill({
+  status,
+  lastBeatAt,
+  savedCount,
+}: {
+  status: LabLinkStatus;
+  lastBeatAt: string | null;
+  savedCount: number;
+}) {
+  const tone =
+    status === 'live'
+      ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
+      : status === 'offline'
+        ? 'border-rose-400 bg-rose-50 text-rose-950'
+        : status === 'open'
+          ? 'border-amber-300 bg-amber-50 text-amber-950'
+          : status === 'closed'
+            ? 'border-slate-300 bg-slate-50 text-slate-800'
+            : 'border-sky-200 bg-sky-50 text-sky-900';
+  return (
+    <div className={`rounded-full border px-3 py-1.5 text-[11px] font-bold ${tone}`}>
+      {status.toUpperCase()}
+      {lastBeatAt ? ` · ${new Date(lastBeatAt).toLocaleTimeString('en-IN')}` : ''}
+      {savedCount ? ` · saved ${savedCount}` : ''}
+    </div>
+  );
+}
+
+function BlinkDecisionPanel({ brief }: { brief: AtmBlinkBrief | null }) {
+  if (!brief) {
+    return (
+      <div className="mt-4 rounded-xl border border-dashed border-violet-200 bg-violet-50/40 px-3 py-3 text-[12px] text-violet-900/70">
+        Start observation — Blink will analyse Nifty + ATM CE/PE and only prepare before a move, never chase after it.
+      </div>
+    );
+  }
+
+  const tone =
+    brief.mode === 'PREPARE_CE'
+      ? 'border-emerald-300 bg-emerald-50 text-emerald-950'
+      : brief.mode === 'PREPARE_PE'
+        ? 'border-rose-300 bg-rose-50 text-rose-950'
+        : brief.mode === 'WAIT_CONFIRM'
+          ? 'border-amber-300 bg-amber-50 text-amber-950'
+          : 'border-violet-200 bg-violet-50 text-violet-950';
+
+  return (
+    <div className={`mt-4 rounded-xl border px-3 py-3 text-[12px] ${tone}`}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wide opacity-60">
+            Blink agent · pre-move decision
+          </p>
+          <p className="mt-1 text-[14px] font-semibold leading-snug">{brief.headline}</p>
+        </div>
+        <div className="rounded-full bg-white/80 px-2.5 py-1 text-[11px] font-bold">
+          {brief.mode.replaceAll('_', ' ')} · {brief.bias} · {brief.confidence}%
+        </div>
+      </div>
+
+      <p className="mt-2 leading-relaxed opacity-90">{brief.thesis}</p>
+
+      {brief.desk || brief.context ? (
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <MiniStat
+            label="Desk bias (today)"
+            value={
+              brief.desk
+                ? `${brief.desk.bias} · ${brief.desk.fromOpenPts} pts from open`
+                : '—'
+            }
+          />
+          <MiniStat
+            label="3-day backdrop"
+            value={brief.context?.threeDayTrend ?? '—'}
+          />
+          <MiniStat
+            label="PDH / PDL"
+            value={
+              brief.context?.pdh != null && brief.context?.pdl != null
+                ? `${brief.context.pdh.toFixed(1)} / ${brief.context.pdl.toFixed(1)}`
+                : '—'
+            }
+          />
+        </div>
+      ) : null}
+
+      {brief.context?.priorDays?.length ? (
+        <div className="mt-2 rounded-lg bg-white/70 px-2.5 py-2 text-[11px]">
+          <p className="text-[9px] font-semibold uppercase tracking-wide opacity-50">
+            Prior sessions used
+          </p>
+          <p className="mt-1 font-medium">
+            {brief.context.priorDays
+              .map(
+                (d) =>
+                  `${d.date.slice(5)} ${d.changePts >= 0 ? '+' : ''}${d.changePts}`
+              )
+              .join(' · ')}
+          </p>
+        </div>
+      ) : null}
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        <MiniStat
+          label="EMA 9 / 21"
+          value={
+            brief.indicators.ema9 != null && brief.indicators.ema21 != null
+              ? `${brief.indicators.ema9} / ${brief.indicators.ema21}`
+              : '—'
+          }
+        />
+        <MiniStat label="RSI 14" value={brief.indicators.rsi?.toFixed(0) ?? '—'} />
+        <MiniStat label="Trend" value={brief.indicators.trend} />
+        <MiniStat
+          label="Nearest level"
+          value={
+            brief.indicators.nearestLevel
+              ? `${brief.indicators.nearestLevel.kind.replaceAll('_', ' ')} ${brief.indicators.nearestLevel.price.toFixed(1)} (${brief.indicators.nearestLevel.distance} pts)`
+              : '—'
+          }
+        />
+      </div>
+
+      <div className="mt-2 grid gap-2 sm:grid-cols-4">
+        <MiniStat label="Δ Nifty 1s" value={String(brief.tape.niftyDelta1s)} />
+        <MiniStat label="Δ CE 1s" value={String(brief.tape.ceDelta1s)} />
+        <MiniStat label="Δ PE 1s" value={String(brief.tape.peDelta1s)} />
+        <MiniStat
+          label="Option lead"
+          value={brief.tape.optionLeadsSpot ?? 'none'}
+        />
+      </div>
+
+      {brief.patterns.length ? (
+        <div className="mt-3">
+          <p className="text-[10px] font-bold uppercase tracking-wide opacity-60">
+            Patterns / indicators Blink sees
+          </p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4 opacity-90">
+            {brief.patterns.map((p) => (
+              <li key={p}>{p}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <div className="mt-3">
+        <p className="text-[10px] font-bold uppercase tracking-wide opacity-60">
+          Must happen first (before any move / idea)
+        </p>
+        <ol className="mt-1 list-decimal space-y-0.5 pl-4 font-medium">
+          {brief.mustHappenFirst.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
+        <p className="mt-2 opacity-80">
+          <strong>Invalidation:</strong> {brief.invalidation}
+        </p>
+      </div>
+
+      <div
+        className={`mt-3 rounded-lg border px-2.5 py-2 ${
+          brief.tradingIdeaPossible
+            ? 'border-emerald-400/60 bg-white/70'
+            : 'border-black/10 bg-white/50'
+        }`}
+      >
+        <p className="text-[10px] font-bold uppercase tracking-wide opacity-60">
+          Can we find a trading idea from this data?
+        </p>
+        <p className="mt-1 font-semibold leading-snug">{brief.ideaVerdict}</p>
+        {brief.indicators.compression ? (
+          <p className="mt-1 text-[11px] opacity-75">
+            Compression flagged — Blink expects a break soon, but will not call direction until acceptance.
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-white/70 px-2 py-1.5">
+      <p className="text-[9px] font-semibold uppercase tracking-wide opacity-50">{label}</p>
+      <p className="mt-0.5 text-[11px] font-bold">{value}</p>
+    </div>
   );
 }
 

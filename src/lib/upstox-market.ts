@@ -74,7 +74,41 @@ function normalizeQuote(raw: QuotePayload, fallbackKey: string): UpstoxQuote | n
   };
 }
 
-/** Fetch full market quotes — max 500 keys per Upstox call */
+/** Short TTL quote cache — cuts duplicate polls (Pinax + Nexus + Lab) hitting UDAPI10005. */
+const QUOTE_CACHE_TTL_MS = 2_500;
+const quoteCache = new Map<string, { at: number; quote: UpstoxQuote }>();
+let lastQuoteCallAt = 0;
+let quoteCooldownUntil = 0;
+let quoteFetchMutex: Promise<void> = Promise.resolve();
+
+/**
+ * Serialize quote HTTP calls across all concurrent requests.
+ * Without this, multiple agents can call `fetchUpstoxQuotes()` at the same time
+ * and bypass the spacing guard around `lastQuoteCallAt`.
+ */
+async function withQuoteFetchLock<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = quoteFetchMutex;
+  let release!: () => void;
+  quoteFetchMutex = new Promise<void>((r) => {
+    release = r;
+  });
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
+function quoteCacheKey(instrumentKey: string): string {
+  return instrumentKey.replace(/:/g, '|');
+}
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Fetch full market quotes — max 500 keys per Upstox call; soft cache + 429 backoff. */
 export async function fetchUpstoxQuotes(
   accessToken: string,
   instrumentKeys: string[]
@@ -83,37 +117,131 @@ export async function fetchUpstoxQuotes(
   if (!token) throw new Error('Missing Upstox access token');
   if (!instrumentKeys.length) return [];
 
+  const now = Date.now();
+  const unique = [...new Set(instrumentKeys.map(quoteCacheKey).filter(Boolean))];
   const results: UpstoxQuote[] = [];
-  const batches = chunk(instrumentKeys, 400);
-  for (let i = 0; i < batches.length; i++) {
-    const batch = batches[i];
-    const qs = encodeURIComponent(batch.join(','));
-    const res = await fetch(`${UPSTOX_API_BASE}/market-quote/quotes?instrument_key=${qs}`, {
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      cache: 'no-store',
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Upstox quotes error ${res.status}: ${text.slice(0, 240)}`);
-    }
-    const json = (await res.json()) as {
-      data?: Record<string, QuotePayload>;
-      status?: string;
-    };
-    const data = json.data || {};
-    for (const [key, raw] of Object.entries(data)) {
-      const q = normalizeQuote(raw, key);
-      if (q) results.push(q);
-    }
-    // Gentle pacing between batches on full-market scans
-    if (i < batches.length - 1) {
-      await new Promise((r) => setTimeout(r, 120));
+  const missing: string[] = [];
+
+  for (const key of unique) {
+    const hit = quoteCache.get(key);
+    if (hit && now - hit.at < QUOTE_CACHE_TTL_MS) {
+      results.push(hit.quote);
+    } else {
+      missing.push(key);
     }
   }
-  return results;
+
+  if (!missing.length) return results;
+
+  // Run actual HTTP calls under a global lock.
+  return withQuoteFetchLock(async () => {
+    // Another concurrent request may have filled the cache while we waited.
+    const now2 = Date.now();
+    const stillMissing: string[] = [];
+    for (const key of unique) {
+      const hit = quoteCache.get(key);
+      if (hit && now2 - hit.at < QUOTE_CACHE_TTL_MS) {
+        results.push(hit.quote);
+      } else {
+        stillMissing.push(key);
+      }
+    }
+
+    // De-dupe results in case we added cached quotes twice.
+    const seen = new Set<string>();
+    const deduped: UpstoxQuote[] = [];
+    for (const r of results) {
+      const k = quoteCacheKey(r.instrumentKey);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      deduped.push(r);
+    }
+    results.length = 0;
+    results.push(...deduped);
+
+    if (!stillMissing.length) return results;
+
+    // Global spacing between live Upstox quote HTTP calls (serialized by lock).
+    const MIN_QUOTE_SPACING_MS = 700;
+    const waitSpace = Math.max(0, MIN_QUOTE_SPACING_MS - (now2 - lastQuoteCallAt));
+    const waitCool = Math.max(0, quoteCooldownUntil - now2);
+    const wait = Math.max(waitSpace, waitCool);
+    if (wait > 0) await sleep(wait);
+
+    const batches = chunk(stillMissing, 400);
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i];
+      const qs = encodeURIComponent(batch.join(','));
+      let attempt = 0;
+      while (attempt < 3) {
+        attempt += 1;
+        lastQuoteCallAt = Date.now();
+        const res = await fetch(
+          `${UPSTOX_API_BASE}/market-quote/quotes?instrument_key=${qs}`,
+          {
+            headers: {
+              Accept: 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            cache: 'no-store',
+          }
+        );
+        if (res.status === 429) {
+          // Backoff to avoid lockstep bursts from multiple agents.
+          const backoff = Math.min(20_000, 2_000 * attempt * attempt);
+          quoteCooldownUntil = Date.now() + backoff;
+          if (attempt >= 3) {
+            // Prefer stale cache over hard fail when rate-limited.
+            for (const key of batch) {
+              const stale = quoteCache.get(key);
+              if (stale) results.push(stale.quote);
+            }
+            break; // go to next batch (or finish)
+          }
+          await sleep(backoff);
+          continue;
+        }
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(
+            `Upstox quotes error ${res.status}: ${text.slice(0, 240)}`
+          );
+        }
+        const json = (await res.json()) as {
+          data?: Record<string, QuotePayload>;
+          status?: string;
+        };
+        const data = json.data || {};
+        const fetchedAt = Date.now();
+        for (const [key, raw] of Object.entries(data)) {
+          const q = normalizeQuote(raw, key);
+          if (q) {
+            results.push(q);
+            quoteCache.set(quoteCacheKey(q.instrumentKey), {
+              at: fetchedAt,
+              quote: q,
+            });
+          }
+        }
+        break;
+      }
+      if (i < batches.length - 1) await sleep(200);
+    }
+
+    // Final de-dupe.
+    const seen2 = new Set<string>();
+    const deduped2: UpstoxQuote[] = [];
+    for (const r of results) {
+      const k = quoteCacheKey(r.instrumentKey);
+      if (seen2.has(k)) continue;
+      seen2.add(k);
+      deduped2.push(r);
+    }
+    results.length = 0;
+    results.push(...deduped2);
+
+    return results;
+  });
 }
 
 export function getBearerToken(req: Request): string | null {

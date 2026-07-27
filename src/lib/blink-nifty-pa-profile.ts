@@ -95,24 +95,32 @@ export function detectMarketScenario(candles: Candle[]): {
   }
   const efficiency = path > 0 ? Math.abs(spot - recentStart) / path : 0;
 
+  // Point-based morning drive (Nifty) — % alone under-calls clear dumps/rallies.
+  const fromOpenPts = spot - open;
+
   // A range may be wide and volatile. Low path efficiency means price keeps
   // reversing instead of progressing directionally.
   const twoSidedAuction =
     recent.length >= 12 &&
     efficiency < 0.3 &&
     Math.abs(recentMovePct) < 0.18 &&
+    Math.abs(fromOpenPts) < 25 &&
     rangePct < 0.75;
   const tightCompression = rangePct < 0.22 && atrp > 0 && atrp < 0.07;
 
   let scenario: MarketScenario = 'SIDEWAYS';
 
-  if (twoSidedAuction || tightCompression) scenario = 'SIDEWAYS';
+  if (fromOpenPts <= -30) scenario = 'DOWN';
+  else if (fromOpenPts >= 30) scenario = 'UP';
+  else if (twoSidedAuction || tightCompression) scenario = 'SIDEWAYS';
   else if (recentMovePct > 0.08 && pa.trend !== -1) scenario = 'UP';
   else if (recentMovePct < -0.08 && pa.trend !== 1) scenario = 'DOWN';
   else if (pa.trend === 1 && dayBiasPct > 0.04) scenario = 'UP';
   else if (pa.trend === -1 && dayBiasPct < -0.04) scenario = 'DOWN';
   else if (dayBiasPct > 0.12) scenario = 'UP';
   else if (dayBiasPct < -0.12) scenario = 'DOWN';
+  else if (fromOpenPts <= -15 && pa.trend !== 1) scenario = 'DOWN';
+  else if (fromOpenPts >= 15 && pa.trend !== -1) scenario = 'UP';
   else if (efficiency >= 0.35) scenario = spot >= mid ? 'UP' : 'DOWN';
 
   const plain =

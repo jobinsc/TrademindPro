@@ -36,7 +36,8 @@ export default function RequireAdmin({ children }: { children: React.ReactNode }
         <Shield className="mx-auto h-8 w-8 text-sky-mid" strokeWidth={1.5} />
         <h1 className="mt-4 font-display text-xl font-semibold text-sky-ink">Admin only</h1>
         <p className="mt-2 text-sm text-sky-ink/60">
-          Nejoic and Jimbo are restricted to admin accounts.
+          Nejoic, Jimbo, and NexusPulse Strategy Note / Trade Archive are restricted to admin
+          accounts.
         </p>
         <Link
           href="/app"

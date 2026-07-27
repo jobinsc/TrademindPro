@@ -1,6 +1,7 @@
 import type { Candle } from '@/lib/nejoic';
 import { istMinutesOfDay } from '@/lib/option-sim';
 import type { UpstoxOptionGreeks } from '@/lib/upstox-options';
+import type { AtmTraderContext } from '@/lib/blink-atm-trader-context';
 
 export type AtmMovementSample = {
   at: string;
@@ -31,12 +32,13 @@ export type AtmMovementInit = {
   ok: boolean;
   observationOnly: true;
   date: string;
-  expiryMode: 'current_week' | 'next_week';
+  expiryMode: 'current_week' | 'next_week' | 'listed';
   rolledFromExpiryDay: boolean;
   keys: { nifty: string; ce: string; pe: string };
   contracts: { ce: AtmLockedContract; pe: AtmLockedContract };
   sample: AtmMovementSample;
   candles: Candle[];
+  traderContext?: AtmTraderContext | null;
   savedSamples?: AtmMovementSample[];
   latencyMs: number;
   candleWarning?: string | null;
@@ -49,7 +51,9 @@ export type CriticalLevelKind =
   | 'SESSION_HIGH'
   | 'SESSION_LOW'
   | 'SWING_HIGH'
-  | 'SWING_LOW';
+  | 'SWING_LOW'
+  | 'PDH'
+  | 'PDL';
 
 export type CriticalLevel = {
   kind: CriticalLevelKind;
@@ -130,6 +134,7 @@ export function mapCriticalLevels(candles: Candle[]): CriticalLevel[] {
   const opening = sorted.slice(0, Math.min(15, sorted.length));
   const completed = sorted.slice(0, Math.max(1, sorted.length - 1));
   const recent = completed.slice(-20);
+  if (!opening.length || !completed.length) return [];
 
   const orHigh = Math.max(...opening.map((c) => c.high));
   const orLow = Math.min(...opening.map((c) => c.low));
@@ -146,6 +151,26 @@ export function mapCriticalLevels(candles: Candle[]): CriticalLevel[] {
     { kind: 'SWING_HIGH', price: swingHigh, direction: 'UP' },
     { kind: 'SWING_LOW', price: swingLow, direction: 'DOWN' },
   ]).filter((level) => Number.isFinite(level.price) && level.price > 0);
+}
+
+/** Add prior-day high/low as frozen tradeable levels when available. */
+export function mapLevelsWithPriorContext(
+  todayCandles: Candle[],
+  context: AtmTraderContext | null | undefined
+): CriticalLevel[] {
+  const base = mapCriticalLevels(
+    todayCandles.length
+      ? todayCandles
+      : []
+  );
+  const extra: CriticalLevel[] = [];
+  if (context?.pdh != null && context.pdh > 0) {
+    extra.push({ kind: 'PDH', price: context.pdh, direction: 'UP' });
+  }
+  if (context?.pdl != null && context.pdl > 0) {
+    extra.push({ kind: 'PDL', price: context.pdl, direction: 'DOWN' });
+  }
+  return uniqueLevels([...base, ...extra]);
 }
 
 /** Build real 1-minute Nifty OHLC from the synchronized one-second samples. */

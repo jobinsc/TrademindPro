@@ -136,6 +136,35 @@ function startNext() {
   });
 }
 
+/** If the process is alive but not answering, force a restart. */
+function startHealthWatch() {
+  let fails = 0;
+  setInterval(async () => {
+    if (stopping || !child) return;
+    const ok = await isPortServing();
+    if (ok) {
+      fails = 0;
+      return;
+    }
+    fails += 1;
+    if (fails >= 3) {
+      fails = 0;
+      log('Health watch: port 3000 not answering — restarting Next…');
+      if (child && !child.killed) {
+        try {
+          child.kill('SIGTERM');
+        } catch {
+          /* exit handler will restart */
+        }
+      } else {
+        killPort(3000);
+        await waitMs(400);
+        startNext();
+      }
+    }
+  }, 10000);
+}
+
 function onStop() {
   if (stopping) return;
   stopping = true;
@@ -177,8 +206,10 @@ async function main() {
     log('Starting with Webpack');
   }
   log('Auto-restart ON — Ctrl+C to stop. Keep this window open while you work.');
+  log('For live trading day use: npm run live:window (health watchdog + webpack).');
 
   startNext();
+  setTimeout(() => startHealthWatch(), 8000);
 }
 
 main().catch((e) => {

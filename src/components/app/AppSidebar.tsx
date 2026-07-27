@@ -26,12 +26,15 @@ import {
   Sparkles,
   LineChart,
   ChevronRight,
+  ChevronDown,
   PanelLeftClose,
   PanelLeft,
   Calculator,
   X,
   Send,
   Zap,
+  Anvil,
+  Radio,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/components/auth/AuthProvider';
@@ -126,6 +129,41 @@ const navGroups: NavGroup[] = [
         ],
       },
       {
+        href: '/app/pinax-forge',
+        label: 'PinaxForge (Paper)',
+        icon: Anvil,
+        exact: true,
+      },
+      {
+        href: '/app/nexus-pulse',
+        label: 'NexusPulse (UT)',
+        icon: Radio,
+        exact: true,
+        children: [
+          {
+            href: '/app/nexus-pulse/strategy-note',
+            label: 'Strategy Note',
+            icon: FileText,
+            exact: true,
+            adminOnly: true,
+          },
+          {
+            href: '/app/nexus-pulse/trade-archive',
+            label: 'Trade Archive',
+            icon: BookOpen,
+            exact: true,
+            adminOnly: true,
+          },
+          {
+            href: '/app/nexus-pulse/daily-reports',
+            label: 'Daily Reports',
+            icon: FileText,
+            exact: true,
+            adminOnly: true,
+          },
+        ],
+      },
+      {
         href: '/app/telegram',
         label: 'Telegram Bot',
         icon: Send,
@@ -192,6 +230,7 @@ export default function AppSidebar({
   const router = useRouter();
   const { user, logout, isAdmin } = useAuth();
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
   const isActive = (href: string, exact?: boolean) => {
     if (exact) return pathname === href;
@@ -218,8 +257,22 @@ export default function AppSidebar({
     });
   }, [pathname]);
 
+  useEffect(() => {
+    setOpenGroups((prev) => {
+      const next = { ...prev };
+      for (const group of visibleGroups) {
+        if (next[group.title] == null) next[group.title] = true;
+      }
+      return next;
+    });
+  }, [isAdmin]);
+
   function toggleMenu(href: string) {
     setOpenMenus((prev) => ({ ...prev, [href]: !prev[href] }));
+  }
+
+  function toggleGroup(title: string) {
+    setOpenGroups((prev) => ({ ...prev, [title]: !prev[title] }));
   }
 
   function handleLogout() {
@@ -324,11 +377,22 @@ export default function AppSidebar({
         {visibleGroups.map((group) => (
           <div key={group.title}>
             {!collapsed && (
-              <p className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-ink/50">
-                {group.title}
-              </p>
+              <button
+                type="button"
+                onClick={() => toggleGroup(group.title)}
+                aria-expanded={openGroups[group.title] !== false}
+                className="mb-1 flex w-full items-center justify-between rounded-lg px-3 py-1 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-ink/50 transition hover:bg-white/60"
+              >
+                <span>{group.title}</span>
+                {openGroups[group.title] === false ? (
+                  <ChevronRight className="h-3.5 w-3.5" strokeWidth={2} />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5" strokeWidth={2} />
+                )}
+              </button>
             )}
-            <div className="space-y-0.5">
+            {(collapsed || openGroups[group.title] !== false) && (
+              <div className="space-y-0.5">
               {group.items.map((item) => {
                 const hasChildren = Boolean(item.children && item.children.length > 0);
                 const expanded = Boolean(openMenus[item.href]) && !collapsed;
@@ -381,7 +445,8 @@ export default function AppSidebar({
                   </div>
                 );
               })}
-            </div>
+              </div>
+            )}
           </div>
         ))}
       </nav>

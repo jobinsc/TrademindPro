@@ -3,15 +3,15 @@ import path from 'path';
 import { NextRequest, NextResponse } from 'next/server';
 import { getBearerToken, fetchUpstoxQuotes } from '@/lib/upstox-market';
 import {
-  fetchNiftyOptionContracts,
-  fetchNextListedNiftyOptionContracts,
   fetchUpstoxOptionGreeks,
-  pickAtmContract,
+  resolveNiftyAtmContracts,
 } from '@/lib/upstox-options';
 import {
   fetchUpstoxIntradayCandles,
+  fetchUpstoxHistoricalWindow,
   NIFTY_INDEX_INSTRUMENT_KEY,
 } from '@/lib/upstox-historical';
+import { buildAtmTraderContext } from '@/lib/blink-atm-trader-context';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,6 +28,12 @@ function istDate(now = new Date()): string {
   return new Date(now.getTime() + 330 * 60 * 1000)
     .toISOString()
     .slice(0, 10);
+}
+
+function dayAdd(isoDate: string, days: number): string {
+  const d = new Date(`${isoDate}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
 function quoteFor(
@@ -155,27 +161,21 @@ export async function POST(req: NextRequest) {
       }
 
       const date = istDate();
-      // On current-week expiry day, observe next week's ATM pair. This avoids
-      // measuring same-day theta collapse as if it were a repeatable scalp edge.
-      let expiryMode: 'current_week' | 'next_week' = 'current_week';
-      let contracts = await fetchNiftyOptionContracts(token, expiryMode);
-      let ce = pickAtmContract(contracts, nifty.lastPrice, 'CE');
-      let pe = pickAtmContract(contracts, nifty.lastPrice, 'PE');
-      const rolledFromExpiryDay = ce?.expiry === date || pe?.expiry === date;
-      if (rolledFromExpiryDay) {
-        expiryMode = 'next_week';
-        contracts = await fetchNiftyOptionContracts(token, expiryMode);
-        ce = pickAtmContract(contracts, nifty.lastPrice, 'CE');
-        pe = pickAtmContract(contracts, nifty.lastPrice, 'PE');
-        if (!ce || !pe) {
-          contracts = await fetchNextListedNiftyOptionContracts(token, date);
-          ce = pickAtmContract(contracts, nifty.lastPrice, 'CE');
-          pe = pickAtmContract(contracts, nifty.lastPrice, 'PE');
-        }
-      }
+      const resolved = await resolveNiftyAtmContracts(
+        token,
+        nifty.lastPrice,
+        date
+      );
+      const { expiryMode, rolledFromExpiryDay } = resolved;
+      const ce = resolved.ce;
+      const pe = resolved.pe;
       if (!ce || !pe) {
         return NextResponse.json(
-          { ok: false, error: `${expiryMode} ATM CE/PE contracts unavailable` },
+          {
+            ok: false,
+            error:
+              'ATM CE/PE contracts unavailable from Upstox (tried current_week, next_week, and listed expiries). Reconnect Upstox and retry in a minute.',
+          },
           { status: 502 }
         );
       }
@@ -205,6 +205,24 @@ export async function POST(req: NextRequest) {
         unit: 'minutes',
         interval: 1,
       });
+      // Prior ~5 calendar days of 1m for 3-session backdrop + PDH/PDL.
+      const priorFrom = dayAdd(date, -5);
+      const priorTo = dayAdd(date, -1);
+      const priorHistory = await fetchUpstoxHistoricalWindow({
+        accessToken: token,
+        instrumentKey: NIFTY_INDEX_INSTRUMENT_KEY,
+        unit: 'minutes',
+        interval: 1,
+        fromDate: priorFrom,
+        toDate: priorTo,
+      }).catch(() => ({ ok: false as const, candles: [], error: 'prior fetch failed' }));
+
+      const todayCandles = history.ok ? history.candles : [];
+      const priorCandles = priorHistory.ok ? priorHistory.candles : [];
+      const candles = [...priorCandles, ...todayCandles].sort((a, b) =>
+        a.t.localeCompare(b.t)
+      );
+      const traderContext = buildAtmTraderContext(candles, date);
       const savedSamples = await loadSavedSamples(date);
 
       return NextResponse.json({
@@ -235,9 +253,14 @@ export async function POST(req: NextRequest) {
           peKey: pe.instrumentKey,
           strike: ce.strike,
         },
-        candles: history.ok ? history.candles : [],
+        candles,
+        traderContext,
         savedSamples,
-        candleWarning: history.ok ? null : history.error,
+        candleWarning: history.ok
+          ? priorHistory.ok
+            ? null
+            : priorHistory.error || 'Prior 3-day history incomplete'
+          : history.error,
       });
     }
 

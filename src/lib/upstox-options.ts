@@ -29,6 +29,7 @@ type ContractRow = {
   trading_symbol?: string;
   strike_price?: number;
   instrument_type?: string;
+  option_type?: string;
   expiry?: string;
   lot_size?: number;
   weekly?: boolean;
@@ -40,10 +41,22 @@ function round50(n: number) {
   return Math.round(n / 50) * 50;
 }
 
+function contractSide(row: ContractRow): OptionSide | null {
+  const raw = String(row.instrument_type || row.option_type || '')
+    .toUpperCase()
+    .trim();
+  if (raw === 'CE' || raw === 'CALL') return 'CE';
+  if (raw === 'PE' || raw === 'PUT') return 'PE';
+  const symbol = String(row.trading_symbol || '').toUpperCase();
+  if (/\bCE\b/.test(symbol) || symbol.endsWith('CE')) return 'CE';
+  if (/\bPE\b/.test(symbol) || symbol.endsWith('PE')) return 'PE';
+  return null;
+}
+
 /** Nearest weekly (or listed) Nifty option contracts from Upstox */
 export async function fetchNiftyOptionContracts(
   accessToken: string,
-  expiryKeyword?: 'current_week' | 'next_week'
+  expiryKeyword?: 'current_week' | 'next_week' | 'far_week' | string
 ): Promise<ContractRow[]> {
   const qs = new URLSearchParams({ instrument_key: NIFTY_INDEX_KEY });
   if (expiryKeyword) qs.set('expiry_date', expiryKeyword);
@@ -79,6 +92,79 @@ export async function fetchNextListedNiftyOptionContracts(
   return nextExpiry
     ? all.filter((row) => String(row.expiry || '').slice(0, 10) === nextExpiry)
     : [];
+}
+
+/**
+ * Prefer current-week ATM; if Upstox returns empty/broken keyword data,
+ * walk next_week → far_week → nearest listed expiry on/after today.
+ */
+export async function resolveNiftyAtmContracts(
+  accessToken: string,
+  spot: number,
+  sessionDate: string
+): Promise<{
+  expiryMode: 'current_week' | 'next_week' | 'listed';
+  rolledFromExpiryDay: boolean;
+  contracts: ContractRow[];
+  ce: NiftyOptionContract | null;
+  pe: NiftyOptionContract | null;
+}> {
+  const tryPick = (rows: ContractRow[]) => ({
+    ce: pickAtmContract(rows, spot, 'CE'),
+    pe: pickAtmContract(rows, spot, 'PE'),
+  });
+
+  let expiryMode: 'current_week' | 'next_week' | 'listed' = 'current_week';
+  let contracts = await fetchNiftyOptionContracts(accessToken, 'current_week');
+  let { ce, pe } = tryPick(contracts);
+  let rolledFromExpiryDay = ce?.expiry === sessionDate || pe?.expiry === sessionDate;
+
+  // Expiry day: avoid same-day theta collapse by rolling to next week.
+  if (rolledFromExpiryDay) {
+    expiryMode = 'next_week';
+    contracts = await fetchNiftyOptionContracts(accessToken, 'next_week');
+    ({ ce, pe } = tryPick(contracts));
+    if (!ce || !pe) {
+      contracts = await fetchNextListedNiftyOptionContracts(accessToken, sessionDate);
+      ({ ce, pe } = tryPick(contracts));
+      expiryMode = 'listed';
+    }
+  }
+
+  // Keyword sometimes returns empty right after open / on holiday weeks.
+  if (!ce || !pe) {
+    for (const keyword of ['next_week', 'far_week'] as const) {
+      contracts = await fetchNiftyOptionContracts(accessToken, keyword);
+      ({ ce, pe } = tryPick(contracts));
+      if (ce && pe) {
+        expiryMode = keyword === 'next_week' ? 'next_week' : 'listed';
+        rolledFromExpiryDay = false;
+        break;
+      }
+    }
+  }
+
+  if (!ce || !pe) {
+    const all = await fetchNiftyOptionContracts(accessToken);
+    const onOrAfter = [...new Set(
+      all
+        .map((row) => String(row.expiry || '').slice(0, 10))
+        .filter((expiry) => /^\d{4}-\d{2}-\d{2}$/.test(expiry) && expiry >= sessionDate)
+    )].sort();
+    for (const expiry of onOrAfter) {
+      // Prefer non-expiring-today contracts when available.
+      if (expiry === sessionDate && onOrAfter.length > 1) continue;
+      contracts = all.filter((row) => String(row.expiry || '').slice(0, 10) === expiry);
+      ({ ce, pe } = tryPick(contracts));
+      if (ce && pe) {
+        expiryMode = 'listed';
+        rolledFromExpiryDay = expiry > sessionDate && onOrAfter[0] === sessionDate;
+        break;
+      }
+    }
+  }
+
+  return { expiryMode, rolledFromExpiryDay, contracts, ce, pe };
 }
 
 /** Fetch live Greeks for up to 50 option contracts in one Upstox V3 call. */
@@ -140,7 +226,7 @@ export function pickAtmContract(
   const side = option.toUpperCase() as OptionSide;
   const wanted = preferredStrike ?? round50(spot);
   const sameSide = contracts.filter(
-    (c) => String(c.instrument_type || '').toUpperCase() === side && c.instrument_key
+    (c) => contractSide(c) === side && Boolean(c.instrument_key)
   );
   if (!sameSide.length) return null;
 

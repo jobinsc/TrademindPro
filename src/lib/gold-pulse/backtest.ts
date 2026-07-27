@@ -1,5 +1,6 @@
 /**
- * GoldPulse backtest — Yahoo GC=F entry TF + HTF Sector 7 G (currently 15m + 30m).
+ * GoldPulse backtest — Yahoo GC=F entry TF + HTF Sector 7 G.
+ * Accepts tunable params for sweeps.
  */
 
 import type { Candle } from '@/lib/nejoic';
@@ -13,6 +14,43 @@ import {
   GOLD_YAHOO_SYMBOL,
 } from '@/lib/gold-pulse/rules';
 import type { GoldExitReason, GoldSide } from '@/lib/gold-pulse/types';
+
+export type GoldBacktestParams = {
+  trailMfeTrigger: number;
+  trailKeepFrac: number;
+  reentryCooldownMs: number;
+  entryFlipNeedsHtfAgainst: boolean;
+  /** Disable 15m flip exits entirely. */
+  disableEntryFlipExit: boolean;
+  defaultSlPct: number;
+  minSlUsd: number;
+  roundTripCostUsd: number;
+  /** Require HTF pos same as prior HTF bar (trend continuation). */
+  requireHtfStable: boolean;
+  /** Skip entry if last N entry bars range is below this ($) — chop filter. */
+  minEntryRangeUsd: number;
+  entryRangeLookback: number;
+  /** Only LONG, only SHORT, or both. */
+  sideMode: 'BOTH' | 'LONG' | 'SHORT';
+  /** Use trail exits. */
+  useTrail: boolean;
+};
+
+export const DEFAULT_BT_PARAMS: GoldBacktestParams = {
+  trailMfeTrigger: GOLD_PULSE_RULES.trailMfeTrigger,
+  trailKeepFrac: GOLD_PULSE_RULES.trailKeepFrac,
+  reentryCooldownMs: GOLD_PULSE_RULES.reentryCooldownMs,
+  entryFlipNeedsHtfAgainst: GOLD_PULSE_RULES.entryFlipNeedsHtfAgainst,
+  disableEntryFlipExit: GOLD_PULSE_RULES.disableEntryFlipExit,
+  defaultSlPct: GOLD_PULSE_RULES.defaultSlPct,
+  minSlUsd: GOLD_PULSE_RULES.minSlUsd,
+  roundTripCostUsd: GOLD_PULSE_RULES.roundTripCostUsd,
+  requireHtfStable: GOLD_PULSE_RULES.requireHtfStable,
+  minEntryRangeUsd: GOLD_PULSE_RULES.minEntryRangeUsd,
+  entryRangeLookback: GOLD_PULSE_RULES.entryRangeLookback,
+  sideMode: GOLD_PULSE_RULES.sideMode,
+  useTrail: GOLD_PULSE_RULES.useTrail,
+};
 
 export type GoldBacktestTrade = {
   id: number;
@@ -50,14 +88,11 @@ export type GoldBacktestResult = {
   exitMix: Record<string, number>;
   trades: GoldBacktestTrade[];
   note: string;
+  params: GoldBacktestParams;
 };
 
 function signedMove(side: GoldSide, entry: number, px: number): number {
   return side === 'LONG' ? px - entry : entry - px;
-}
-
-function slDistance(entry: number): number {
-  return Math.max(entry * GOLD_PULSE_RULES.defaultSlPct, GOLD_PULSE_RULES.minSlUsd);
 }
 
 function htfIndexAt(htfTimes: number[], tMs: number): number {
@@ -79,7 +114,9 @@ function htfIndexAt(htfTimes: number[], tMs: number): number {
 export function runGoldPulseBacktest(opts: {
   candlesEntry: Candle[];
   candlesHtf: Candle[];
+  params?: Partial<GoldBacktestParams>;
 }): GoldBacktestResult {
+  const p: GoldBacktestParams = { ...DEFAULT_BT_PARAMS, ...opts.params };
   const cEntry = [...opts.candlesEntry].sort((a, b) => a.t.localeCompare(b.t));
   const cHtf = [...opts.candlesHtf].sort((a, b) => a.t.localeCompare(b.t));
 
@@ -115,6 +152,8 @@ export function runGoldPulseBacktest(opts: {
   let lastExitMs = 0;
   const exitMix: Record<string, number> = {};
 
+  const slDistance = (entry: number) => Math.max(entry * p.defaultSlPct, p.minSlUsd);
+
   const closeTrade = (
     o: Open,
     exitPrice: number,
@@ -124,7 +163,7 @@ export function runGoldPulseBacktest(opts: {
   ) => {
     const move = signedMove(o.side, o.entry, exitPrice);
     const gross = move * GOLD_PULSE_RULES.qty * GOLD_PULSE_RULES.pointValue;
-    const net = gross - GOLD_PULSE_RULES.roundTripCostUsd;
+    const net = gross - p.roundTripCostUsd;
     trades.push({
       id: o.id,
       side: o.side,
@@ -156,6 +195,7 @@ export function runGoldPulseBacktest(opts: {
     const tMs = new Date(bar.t).getTime();
     const hi = htfIndexAt(htfTimes, tMs);
     const htfPos = (hi >= 0 ? utHtf[hi]?.pos : 0) as -1 | 0 | 1;
+    const htfPrevPos = (hi > 0 ? utHtf[hi - 1]?.pos : 0) as -1 | 0 | 1;
 
     if (open) {
       const moveHi = signedMove(open.side, open.entry, open.side === 'LONG' ? bar.high : bar.low);
@@ -177,16 +217,14 @@ export function runGoldPulseBacktest(opts: {
         const htfAgainst =
           (open.side === 'LONG' && htfPos === -1) || (open.side === 'SHORT' && htfPos === 1);
         if (
+          !p.disableEntryFlipExit &&
           entryAgainst &&
-          (!GOLD_PULSE_RULES.entryFlipNeedsHtfAgainst || htfAgainst)
+          (!p.entryFlipNeedsHtfAgainst || htfAgainst)
         ) {
           closeTrade(open, bar.close, bar.t, 'UT_ENTRY', i);
-        } else {
+        } else if (p.useTrail) {
           const move = signedMove(open.side, open.entry, bar.close);
-          if (
-            open.mfe >= GOLD_PULSE_RULES.trailMfeTrigger &&
-            move < GOLD_PULSE_RULES.trailKeepFrac * open.mfe
-          ) {
+          if (open.mfe >= p.trailMfeTrigger && move < p.trailKeepFrac * open.mfe) {
             closeTrade(open, bar.close, bar.t, 'TRAIL', i);
           }
         }
@@ -199,9 +237,23 @@ export function runGoldPulseBacktest(opts: {
       let side: GoldSide | null = null;
       if (buyEdge && htfPos === 1) side = 'LONG';
       if (sellEdge && htfPos === -1) side = 'SHORT';
+      if (side && p.sideMode === 'LONG' && side !== 'LONG') side = null;
+      if (side && p.sideMode === 'SHORT' && side !== 'SHORT') side = null;
 
-      const cooldownOk =
-        !lastExitMs || tMs - lastExitMs >= GOLD_PULSE_RULES.reentryCooldownMs;
+      if (side && p.requireHtfStable && htfPrevPos !== htfPos) side = null;
+
+      if (side && p.minEntryRangeUsd > 0) {
+        const from = Math.max(0, i - p.entryRangeLookback + 1);
+        let hiPx = -Infinity;
+        let loPx = Infinity;
+        for (let j = from; j <= i; j++) {
+          hiPx = Math.max(hiPx, cEntry[j].high);
+          loPx = Math.min(loPx, cEntry[j].low);
+        }
+        if (hiPx - loPx < p.minEntryRangeUsd) side = null;
+      }
+
+      const cooldownOk = !lastExitMs || tMs - lastExitMs >= p.reentryCooldownMs;
 
       if (side && cooldownOk) {
         const entry = bar.close;
@@ -253,12 +305,13 @@ export function runGoldPulseBacktest(opts: {
     maxDrawdown: Math.round(maxDd * 100) / 100,
     exitMix,
     trades,
-    note: `Yahoo ${GOLD_YAHOO_SYMBOL}: UT ${GOLD_UT_ENTRY.tf}+${GOLD_UT_HTF.tf}. Trail≥$${GOLD_PULSE_RULES.trailMfeTrigger}, cooldown ${GOLD_PULSE_RULES.reentryCooldownMs / 60000}m, 15m-flip only if 30m against. Cost $${GOLD_PULSE_RULES.roundTripCostUsd}/trade.`,
+    note: `Sweep params applied. Cost $${p.roundTripCostUsd}/trade.`,
+    params: p,
   };
 }
 
-export async function fetchAndRunGoldPulseBacktest(): Promise<
-  GoldBacktestResult | { ok: false; error: string }
+export async function fetchGoldPulseCandles(): Promise<
+  { ok: true; candlesEntry: Candle[]; candlesHtf: Candle[] } | { ok: false; error: string }
 > {
   const [rEntry, rHtf] = await Promise.all([
     fetchYahooCandles(GOLD_YAHOO_SYMBOL, GOLD_UT_ENTRY.tf, 0, GOLD_YAHOO_LABEL, '1mo'),
@@ -270,5 +323,17 @@ export async function fetchAndRunGoldPulseBacktest(): Promise<
   if (!rHtf.ok || !rHtf.candles.length) {
     return { ok: false, error: rHtf.error || `Yahoo ${GOLD_UT_HTF.tf} failed` };
   }
-  return runGoldPulseBacktest({ candlesEntry: rEntry.candles, candlesHtf: rHtf.candles });
+  return { ok: true, candlesEntry: rEntry.candles, candlesHtf: rHtf.candles };
+}
+
+export async function fetchAndRunGoldPulseBacktest(
+  params?: Partial<GoldBacktestParams>
+): Promise<GoldBacktestResult | { ok: false; error: string }> {
+  const data = await fetchGoldPulseCandles();
+  if (!data.ok) return data;
+  return runGoldPulseBacktest({
+    candlesEntry: data.candlesEntry,
+    candlesHtf: data.candlesHtf,
+    params,
+  });
 }

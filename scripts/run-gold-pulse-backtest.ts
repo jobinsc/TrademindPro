@@ -12,7 +12,7 @@ async function main() {
         entryTf: r.entryTf,
         htfTf: r.htfTf,
         bars5m: r.bars5m,
-        bars15m: r.bars15m,
+        barsHtf: r.barsHtf,
         from: r.from,
         to: r.to,
         tradeCount: r.tradeCount,

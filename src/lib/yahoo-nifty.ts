@@ -145,7 +145,8 @@ export async function fetchYahooCandles(
   symbol: string,
   interval: YahooInterval | string,
   maxBars = 120,
-  label?: string
+  label?: string,
+  rangeOverride?: string
 ): Promise<{
   ok: boolean;
   spot: number;
@@ -156,7 +157,7 @@ export async function fetchYahooCandles(
   error?: string;
 }> {
   const iv = (interval in RANGE ? interval : '5m') as YahooInterval;
-  const range = RANGE[iv];
+  const range = rangeOverride || RANGE[iv];
   const encoded = encodeURIComponent(symbol);
   const nice = label || symbol;
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encoded}?interval=${iv}&range=${range}`;

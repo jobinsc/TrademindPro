@@ -1,5 +1,5 @@
 /**
- * GoldPulse backtest — Yahoo GC=F 5m entry + 15m Sector 7 G filter/exit.
+ * GoldPulse backtest — Yahoo GC=F 5m entry + 30m Sector 7 G filter/exit.
  */
 
 import type { Candle } from '@/lib/nejoic';
@@ -35,7 +35,7 @@ export type GoldBacktestResult = {
   entryTf: string;
   htfTf: string;
   bars5m: number;
-  bars15m: number;
+  barsHtf: number;
   from: string | null;
   to: string | null;
   tradeCount: number;
@@ -79,21 +79,21 @@ function htfIndexAt(htfTimes: number[], tMs: number): number {
 
 export function runGoldPulseBacktest(opts: {
   candles5m: Candle[];
-  candles15m: Candle[];
+  candlesHtf: Candle[];
 }): GoldBacktestResult {
   const c5 = [...opts.candles5m].sort((a, b) => a.t.localeCompare(b.t));
-  const c15 = [...opts.candles15m].sort((a, b) => a.t.localeCompare(b.t));
+  const cHtf = [...opts.candlesHtf].sort((a, b) => a.t.localeCompare(b.t));
 
   const ut5 = runUtBot(c5, {
     keyValue: GOLD_UT_ENTRY.keyValue,
     atrPeriod: GOLD_UT_ENTRY.atrPeriod,
   });
-  const ut15 = runUtBot(c15, {
+  const utHtf = runUtBot(cHtf, {
     keyValue: GOLD_UT_HTF.keyValue,
     atrPeriod: GOLD_UT_HTF.atrPeriod,
   });
 
-  const htfTimes = c15.map((c) => new Date(c.t).getTime());
+  const htfTimes = cHtf.map((c) => new Date(c.t).getTime());
   const warm = Math.max(GOLD_UT_ENTRY.atrPeriod, GOLD_UT_HTF.atrPeriod) + 5;
 
   type Open = {
@@ -154,7 +154,7 @@ export function runGoldPulseBacktest(opts: {
 
     const tMs = new Date(bar.t).getTime();
     const hi = htfIndexAt(htfTimes, tMs);
-    const htfPos = (hi >= 0 ? ut15[hi]?.pos : 0) as -1 | 0 | 1;
+    const htfPos = (hi >= 0 ? utHtf[hi]?.pos : 0) as -1 | 0 | 1;
 
     if (open) {
       const moveHi = signedMove(open.side, open.entry, open.side === 'LONG' ? bar.high : bar.low);
@@ -186,7 +186,7 @@ export function runGoldPulseBacktest(opts: {
       }
     }
 
-    // New entry on fresh 5m buy/sell edge + 15m agree
+    // New entry on fresh 5m buy/sell edge + HTF agree
     if (!open && prev) {
       const buyEdge = u.buy && !prev.buy;
       const sellEdge = u.sell && !prev.sell;
@@ -228,7 +228,7 @@ export function runGoldPulseBacktest(opts: {
     entryTf: GOLD_UT_ENTRY.tf,
     htfTf: GOLD_UT_HTF.tf,
     bars5m: c5.length,
-    bars15m: c15.length,
+    barsHtf: cHtf.length,
     from: c5[0]?.t ?? null,
     to: c5[c5.length - 1]?.t ?? null,
     tradeCount: trades.length,
@@ -251,16 +251,15 @@ export function runGoldPulseBacktest(opts: {
 export async function fetchAndRunGoldPulseBacktest(): Promise<
   GoldBacktestResult | { ok: false; error: string }
 > {
-  // maxBars 0 = keep full Yahoo window for 5m (~1mo) and 15m
-  const [r5, r15] = await Promise.all([
+  const [r5, rHtf] = await Promise.all([
     fetchYahooCandles(GOLD_YAHOO_SYMBOL, '5m', 0, GOLD_YAHOO_LABEL),
-    fetchYahooCandles(GOLD_YAHOO_SYMBOL, '15m', 0, GOLD_YAHOO_LABEL),
+    fetchYahooCandles(GOLD_YAHOO_SYMBOL, GOLD_UT_HTF.tf, 0, GOLD_YAHOO_LABEL, '1mo'),
   ]);
   if (!r5.ok || !r5.candles.length) {
     return { ok: false, error: r5.error || 'Yahoo 5m failed' };
   }
-  if (!r15.ok || !r15.candles.length) {
-    return { ok: false, error: r15.error || 'Yahoo 15m failed' };
+  if (!rHtf.ok || !rHtf.candles.length) {
+    return { ok: false, error: rHtf.error || `Yahoo ${GOLD_UT_HTF.tf} failed` };
   }
-  return runGoldPulseBacktest({ candles5m: r5.candles, candles15m: r15.candles });
+  return runGoldPulseBacktest({ candles5m: r5.candles, candlesHtf: rHtf.candles });
 }

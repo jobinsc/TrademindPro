@@ -116,7 +116,7 @@ export default function GoldPulseWorkspace() {
   }
 
   async function runBacktest() {
-    setBusy('Backtesting Yahoo 5m + 15m…');
+    setBusy(`Backtesting Yahoo ${GOLD_UT_ENTRY.tf} + ${GOLD_UT_HTF.tf}…`);
     setError('');
     try {
       const res = await fetch('/api/gold-pulse/backtest', {
@@ -159,8 +159,8 @@ export default function GoldPulseWorkspace() {
           </h1>
           <p className="mt-1 max-w-2xl text-[13px] text-sky-ink/65">
             International gold paper desk. UT on {GOLD_UT_ENTRY.tf} + {GOLD_UT_HTF.tf}. Exit{' '}
-            <strong>{GOLD_PULSE_RULES.sector7Label}</strong> when 15m UT turns against you (same idea
-            as NexusPulse Sector 7 A, but for gold — does not change Nifty agents).
+            <strong>{GOLD_PULSE_RULES.sector7Label}</strong> when {GOLD_UT_HTF.tf} UT turns against you
+            (same idea as NexusPulse Sector 7 A, but for gold — does not change Nifty agents).
           </p>
           <p className="mt-1 text-[11px] text-sky-ink/45">v{GOLD_PULSE_VERSION} · paper only</p>
         </div>
@@ -176,7 +176,7 @@ export default function GoldPulseWorkspace() {
             ) : (
               <FlaskConical className="h-4 w-4" />
             )}
-            Backtest 5m+15m
+            Backtest {GOLD_UT_ENTRY.tf}+{GOLD_UT_HTF.tf}
           </button>
           {!polling ? (
             <button
@@ -223,7 +223,7 @@ export default function GoldPulseWorkspace() {
           sub={session?.lastSignal?.reason}
         />
         <Stat
-          label="5m / 15m UT"
+          label={`${GOLD_UT_ENTRY.tf} / ${GOLD_UT_HTF.tf} UT`}
           value={`${session?.utEntry?.last?.pos ?? '—'} / ${session?.utHtf?.last?.pos ?? '—'}`}
           sub="+1 bull · -1 bear"
         />
@@ -237,7 +237,7 @@ export default function GoldPulseWorkspace() {
           </h2>
           <p className="mt-1 text-[11px] text-sky-ink/55">{bt.note}</p>
           <p className="mt-1 text-[11px] text-sky-ink/45">
-            Bars: {bt.bars5m} × 5m · {bt.bars15m} × 15m
+            Bars: {bt.bars5m} × {bt.entryTf} · {bt.barsHtf} × {bt.htfTf}
             {bt.from && bt.to
               ? ` · ${new Date(bt.from).toISOString().slice(0, 10)} → ${new Date(bt.to).toISOString().slice(0, 10)}`
               : ''}
@@ -293,7 +293,9 @@ export default function GoldPulseWorkspace() {
       <section className="mt-6 rounded-2xl border border-amber-100 bg-white p-4 shadow-sm">
         <h2 className="text-sm font-bold text-sky-deep">Open trades</h2>
         {open.length === 0 ? (
-          <p className="mt-2 text-[12px] text-sky-ink/50">Flat — waiting for aligned 15m + 60m UT.</p>
+          <p className="mt-2 text-[12px] text-sky-ink/50">
+            Flat — waiting for aligned {GOLD_UT_ENTRY.tf} + {GOLD_UT_HTF.tf} UT.
+          </p>
         ) : (
           <ul className="mt-3 space-y-2">
             {open.map((t) => (

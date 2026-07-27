@@ -1,14 +1,25 @@
 import { CLOUD_SYNC_KEYS } from '@/lib/cloud-sync-keys';
-import { SIDEBAR_COLLAPSED_KEY } from '@/lib/sidebar-prefs';
+import {
+  SIDEBAR_COLLAPSED_KEY,
+  SIDEBAR_META_KEY,
+  mergeSidebarMetaFromCloud,
+  readSidebarMeta,
+} from '@/lib/sidebar-prefs';
 
 export { CLOUD_SYNC_KEYS };
 
 const SYNC_EVENT = 'trademindpro-cloud-synced';
 
-function parseStored(raw: string | null): unknown {
+function parseStored(key: string, raw: string | null): unknown {
   if (raw == null || raw === '') return null;
-  // Keep sidebar flag as plain '1'/'0' so cloud round-trips stay stable
-  if (raw === '1' || raw === '0') return raw;
+  if (key === SIDEBAR_META_KEY) {
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  if (key === SIDEBAR_COLLAPSED_KEY && (raw === '1' || raw === '0')) return raw;
   try {
     return JSON.parse(raw) as unknown;
   } catch {
@@ -44,10 +55,34 @@ export async function pullCloudData(_userId?: string): Promise<{ ok: boolean; er
       return pushCloudData();
     }
 
+    let cloudSidebarMeta: unknown = null;
+    let cloudSidebarCollapsed: unknown = null;
+
     for (const row of rows) {
       if (!CLOUD_SYNC_KEYS.includes(row.key as (typeof CLOUD_SYNC_KEYS)[number])) continue;
       if (row.value === null || row.value === undefined) continue;
+
+      // Sidebar prefs: merge by timestamp so stale cloud can't force menu open again
+      if (row.key === SIDEBAR_META_KEY) {
+        cloudSidebarMeta = row.value;
+        continue;
+      }
+      if (row.key === SIDEBAR_COLLAPSED_KEY) {
+        cloudSidebarCollapsed = row.value;
+        continue;
+      }
+      if (row.key === 'trademindpro_sidebar_groups_v1' || row.key === 'trademindpro_sidebar_menus_v1') {
+        // Applied via meta merge; skip raw overwrite
+        continue;
+      }
+
       localStorage.setItem(row.key, serializeStored(row.key, row.value));
+    }
+
+    if (cloudSidebarMeta != null) {
+      mergeSidebarMetaFromCloud(cloudSidebarMeta);
+    } else if (cloudSidebarCollapsed != null) {
+      mergeSidebarMetaFromCloud(cloudSidebarCollapsed);
     }
 
     window.dispatchEvent(new Event(SYNC_EVENT));
@@ -61,10 +96,19 @@ export async function pullCloudData(_userId?: string): Promise<{ ok: boolean; er
 export async function pushCloudData(_userId?: string): Promise<{ ok: boolean; error?: string }> {
   if (typeof window === 'undefined') return { ok: false, error: 'No window' };
 
+  // Ensure meta blob exists before push
+  const meta = readSidebarMeta();
+  try {
+    localStorage.setItem(SIDEBAR_META_KEY, JSON.stringify(meta));
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, meta.collapsed ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+
   const rows = CLOUD_SYNC_KEYS.map((key) => {
     const raw = localStorage.getItem(key);
     if (raw == null) return null;
-    return { key, value: parseStored(raw) };
+    return { key, value: parseStored(key, raw) };
   }).filter(Boolean) as { key: string; value: unknown }[];
 
   if (rows.length === 0) return { ok: true };

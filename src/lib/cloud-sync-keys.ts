@@ -32,4 +32,5 @@ export const CLOUD_SYNC_KEYS = [
   'trademindpro_sidebar_collapsed',
   'trademindpro_sidebar_groups_v1',
   'trademindpro_sidebar_menus_v1',
+  'trademindpro_sidebar_meta_v1',
 ] as const;

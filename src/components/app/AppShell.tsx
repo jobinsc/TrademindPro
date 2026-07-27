@@ -11,17 +11,16 @@ import { onCloudSynced, pushCloudData } from '@/lib/cloud-sync';
 import { readSidebarCollapsed, writeSidebarCollapsed } from '@/lib/sidebar-prefs';
 
 export default function AppShell({ children }: { children: ReactNode }) {
-  const [collapsed, setCollapsed] = useState(false);
+  // Heavy menu: start collapsed (icons only) until prefs say otherwise
+  const [collapsed, setCollapsed] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    setCollapsed(readSidebarCollapsed());
+    const apply = () => setCollapsed(readSidebarCollapsed());
+    apply();
     setReady(true);
-    // After login/cloud pull, re-apply so we don't flash expanded forever
-    return onCloudSynced(() => {
-      setCollapsed(readSidebarCollapsed());
-    });
+    return onCloudSynced(apply);
   }, []);
 
   useEffect(() => {
@@ -49,14 +48,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
     setMobileOpen(false);
   }
 
-  const desktopCollapsed = ready ? collapsed : false;
+  // Until prefs load, keep collapsed (avoid flashing the full heavy menu)
+  const desktopCollapsed = ready ? collapsed : true;
 
   return (
     <div className="flex min-h-dvh w-full bg-sky-soft text-sky-ink">
       <NavHistoryTracker />
       <ChartPeekHost />
       <NejoicRuntimeHost />
-      {/* Desktop sidebar — full or icon rail from md up */}
       <div className="sticky top-0 z-40 hidden h-dvh min-h-0 shrink-0 md:flex">
         <AppSidebar
           collapsed={desktopCollapsed}
@@ -65,7 +64,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
         />
       </div>
 
-      {/* Mobile drawer — tap Menu in top bar */}
       {mobileOpen && (
         <div className="fixed inset-0 z-[60] md:hidden">
           <button

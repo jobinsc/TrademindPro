@@ -42,10 +42,8 @@ import TradePinaxLogo from '@/components/app/TradePinaxLogo';
 import { hrefWithFrom } from '@/lib/nav-return';
 import { onCloudSynced, pushCloudData } from '@/lib/cloud-sync';
 import {
-  SIDEBAR_GROUPS_KEY,
-  SIDEBAR_MENUS_KEY,
-  readJsonPref,
-  writeJsonPref,
+  readSidebarMeta,
+  writeSidebarMeta,
 } from '@/lib/sidebar-prefs';
 
 type NavItem = {
@@ -251,13 +249,14 @@ export default function AppSidebar({
   };
 
   useEffect(() => {
-    setOpenMenus(readJsonPref(SIDEBAR_MENUS_KEY));
-    setOpenGroups(readJsonPref(SIDEBAR_GROUPS_KEY));
+    const apply = () => {
+      const meta = readSidebarMeta();
+      setOpenMenus(meta.menus);
+      setOpenGroups(meta.groups);
+    };
+    apply();
     setPrefsReady(true);
-    return onCloudSynced(() => {
-      setOpenMenus(readJsonPref(SIDEBAR_MENUS_KEY));
-      setOpenGroups(readJsonPref(SIDEBAR_GROUPS_KEY));
-    });
+    return onCloudSynced(apply);
   }, []);
 
   useEffect(() => {
@@ -273,7 +272,7 @@ export default function AppSidebar({
           }
         }
       }
-      if (changed && prefsReady) writeJsonPref(SIDEBAR_MENUS_KEY, next);
+      if (changed && prefsReady) writeSidebarMeta({ menus: next });
       return changed ? next : prev;
     });
   }, [pathname, prefsReady]);
@@ -285,13 +284,13 @@ export default function AppSidebar({
       let changed = false;
       for (const group of navGroups) {
         if (group.title === 'Admin' && !isAdmin) continue;
-        // Only default brand-new groups to open; keep user collapses
+        // New groups start CLOSED (heavy menu) — keep user-saved collapses
         if (next[group.title] == null) {
-          next[group.title] = true;
+          next[group.title] = false;
           changed = true;
         }
       }
-      if (changed) writeJsonPref(SIDEBAR_GROUPS_KEY, next);
+      if (changed) writeSidebarMeta({ groups: next });
       return changed ? next : prev;
     });
   }, [isAdmin, prefsReady]);
@@ -299,7 +298,7 @@ export default function AppSidebar({
   function toggleMenu(href: string) {
     setOpenMenus((prev) => {
       const next = { ...prev, [href]: !prev[href] };
-      writeJsonPref(SIDEBAR_MENUS_KEY, next);
+      writeSidebarMeta({ menus: next });
       void pushCloudData();
       return next;
     });
@@ -308,7 +307,7 @@ export default function AppSidebar({
   function toggleGroup(title: string) {
     setOpenGroups((prev) => {
       const next = { ...prev, [title]: prev[title] === false };
-      writeJsonPref(SIDEBAR_GROUPS_KEY, next);
+      writeSidebarMeta({ groups: next });
       void pushCloudData();
       return next;
     });

@@ -30,4 +30,6 @@ export const CLOUD_SYNC_KEYS = [
   'trademindpro_ai_activity_v1',
   'trademindpro_ai_last_run_v1',
   'trademindpro_sidebar_collapsed',
+  'trademindpro_sidebar_groups_v1',
+  'trademindpro_sidebar_menus_v1',
 ] as const;

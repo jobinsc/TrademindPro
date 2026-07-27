@@ -1,4 +1,5 @@
 import { CLOUD_SYNC_KEYS } from '@/lib/cloud-sync-keys';
+import { SIDEBAR_COLLAPSED_KEY } from '@/lib/sidebar-prefs';
 
 export { CLOUD_SYNC_KEYS };
 
@@ -6,6 +7,8 @@ const SYNC_EVENT = 'trademindpro-cloud-synced';
 
 function parseStored(raw: string | null): unknown {
   if (raw == null || raw === '') return null;
+  // Keep sidebar flag as plain '1'/'0' so cloud round-trips stay stable
+  if (raw === '1' || raw === '0') return raw;
   try {
     return JSON.parse(raw) as unknown;
   } catch {
@@ -13,7 +16,12 @@ function parseStored(raw: string | null): unknown {
   }
 }
 
-function serializeStored(value: unknown): string {
+function serializeStored(key: string, value: unknown): string {
+  if (key === SIDEBAR_COLLAPSED_KEY) {
+    if (value === true || value === 1 || value === '1') return '1';
+    if (value === false || value === 0 || value === '0') return '0';
+    return value ? '1' : '0';
+  }
   if (typeof value === 'string') return value;
   return JSON.stringify(value);
 }
@@ -39,7 +47,7 @@ export async function pullCloudData(_userId?: string): Promise<{ ok: boolean; er
     for (const row of rows) {
       if (!CLOUD_SYNC_KEYS.includes(row.key as (typeof CLOUD_SYNC_KEYS)[number])) continue;
       if (row.value === null || row.value === undefined) continue;
-      localStorage.setItem(row.key, serializeStored(row.value));
+      localStorage.setItem(row.key, serializeStored(row.key, row.value));
     }
 
     window.dispatchEvent(new Event(SYNC_EVENT));

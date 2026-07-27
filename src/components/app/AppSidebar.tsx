@@ -40,6 +40,13 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/components/auth/AuthProvider';
 import TradePinaxLogo from '@/components/app/TradePinaxLogo';
 import { hrefWithFrom } from '@/lib/nav-return';
+import { onCloudSynced, pushCloudData } from '@/lib/cloud-sync';
+import {
+  SIDEBAR_GROUPS_KEY,
+  SIDEBAR_MENUS_KEY,
+  readJsonPref,
+  writeJsonPref,
+} from '@/lib/sidebar-prefs';
 
 type NavItem = {
   href: string;
@@ -231,6 +238,7 @@ export default function AppSidebar({
   const { user, logout, isAdmin } = useAuth();
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const [prefsReady, setPrefsReady] = useState(false);
 
   const isActive = (href: string, exact?: boolean) => {
     if (exact) return pathname === href;
@@ -243,36 +251,67 @@ export default function AppSidebar({
   };
 
   useEffect(() => {
+    setOpenMenus(readJsonPref(SIDEBAR_MENUS_KEY));
+    setOpenGroups(readJsonPref(SIDEBAR_GROUPS_KEY));
+    setPrefsReady(true);
+    return onCloudSynced(() => {
+      setOpenMenus(readJsonPref(SIDEBAR_MENUS_KEY));
+      setOpenGroups(readJsonPref(SIDEBAR_GROUPS_KEY));
+    });
+  }, []);
+
+  useEffect(() => {
     setOpenMenus((prev) => {
       const next = { ...prev };
+      let changed = false;
       for (const group of navGroups) {
         for (const item of group.items) {
           if (!item.children?.length) continue;
-          if (pathname.startsWith(`${item.href}/`)) {
+          if (pathname.startsWith(`${item.href}/`) && !next[item.href]) {
             next[item.href] = true;
+            changed = true;
           }
         }
       }
-      return next;
+      if (changed && prefsReady) writeJsonPref(SIDEBAR_MENUS_KEY, next);
+      return changed ? next : prev;
     });
-  }, [pathname]);
+  }, [pathname, prefsReady]);
 
   useEffect(() => {
+    if (!prefsReady) return;
     setOpenGroups((prev) => {
       const next = { ...prev };
-      for (const group of visibleGroups) {
-        if (next[group.title] == null) next[group.title] = true;
+      let changed = false;
+      for (const group of navGroups) {
+        if (group.title === 'Admin' && !isAdmin) continue;
+        // Only default brand-new groups to open; keep user collapses
+        if (next[group.title] == null) {
+          next[group.title] = true;
+          changed = true;
+        }
       }
-      return next;
+      if (changed) writeJsonPref(SIDEBAR_GROUPS_KEY, next);
+      return changed ? next : prev;
     });
-  }, [isAdmin]);
+  }, [isAdmin, prefsReady]);
 
   function toggleMenu(href: string) {
-    setOpenMenus((prev) => ({ ...prev, [href]: !prev[href] }));
+    setOpenMenus((prev) => {
+      const next = { ...prev, [href]: !prev[href] };
+      writeJsonPref(SIDEBAR_MENUS_KEY, next);
+      void pushCloudData();
+      return next;
+    });
   }
 
   function toggleGroup(title: string) {
-    setOpenGroups((prev) => ({ ...prev, [title]: !prev[title] }));
+    setOpenGroups((prev) => {
+      const next = { ...prev, [title]: prev[title] === false };
+      writeJsonPref(SIDEBAR_GROUPS_KEY, next);
+      void pushCloudData();
+      return next;
+    });
   }
 
   function handleLogout() {

@@ -7,8 +7,8 @@ import AppSystemStatus from '@/components/app/AppSystemStatus';
 import NavHistoryTracker from '@/components/app/NavHistoryTracker';
 import { ChartPeekHost } from '@/components/chart/SymbolChartLink';
 import NejoicRuntimeHost from '@/components/nejoic/NejoicRuntimeHost';
-
-const COLLAPSE_KEY = 'trademindpro_sidebar_collapsed';
+import { onCloudSynced, pushCloudData } from '@/lib/cloud-sync';
+import { readSidebarCollapsed, writeSidebarCollapsed } from '@/lib/sidebar-prefs';
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -16,12 +16,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    try {
-      setCollapsed(localStorage.getItem(COLLAPSE_KEY) === '1');
-    } catch {
-      /* ignore */
-    }
+    setCollapsed(readSidebarCollapsed());
     setReady(true);
+    // After login/cloud pull, re-apply so we don't flash expanded forever
+    return onCloudSynced(() => {
+      setCollapsed(readSidebarCollapsed());
+    });
   }, []);
 
   useEffect(() => {
@@ -35,11 +35,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
   function toggleDesktop() {
     setCollapsed((c) => {
       const next = !c;
-      try {
-        localStorage.setItem(COLLAPSE_KEY, next ? '1' : '0');
-      } catch {
-        /* ignore */
-      }
+      writeSidebarCollapsed(next);
+      void pushCloudData();
       return next;
     });
   }

@@ -1,5 +1,5 @@
 /**
- * GoldPulse session — Yahoo GC=F 5m + 15m UT paper (isolated agent).
+ * GoldPulse session — Yahoo GC=F 15m + 30m UT paper (isolated agent).
  */
 
 import { fetchYahooCandles } from '@/lib/yahoo-nifty';
@@ -109,9 +109,18 @@ export async function tickGoldSession(
     let openTrades = updated.open;
     const closedTrades = [...session.closedTrades, ...updated.closed];
 
+    const lastClosedAt = closedTrades.reduce((latest, t) => {
+      const ts = t.closedAt ? new Date(t.closedAt).getTime() : 0;
+      return ts > latest ? ts : latest;
+    }, 0);
+    const cooldownOk =
+      !lastClosedAt ||
+      Date.now() - lastClosedAt >= GOLD_PULSE_RULES.reentryCooldownMs;
+
     if (
       !session.autoPaused &&
       openTrades.length === 0 &&
+      cooldownOk &&
       decision.newEntryEdge &&
       (decision.side === 'LONG' || decision.side === 'SHORT')
     ) {

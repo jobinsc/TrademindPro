@@ -112,6 +112,7 @@ export function runGoldPulseBacktest(opts: {
   let equity = 0;
   let peak = 0;
   let maxDd = 0;
+  let lastExitMs = 0;
   const exitMix: Record<string, number> = {};
 
   const closeTrade = (
@@ -142,6 +143,7 @@ export function runGoldPulseBacktest(opts: {
     equity += net;
     peak = Math.max(peak, equity);
     maxDd = Math.max(maxDd, peak - equity);
+    lastExitMs = new Date(closedAt).getTime();
     open = null;
   };
 
@@ -169,17 +171,24 @@ export function runGoldPulseBacktest(opts: {
         closeTrade(open, bar.close, bar.t, 'UT_HTF', i);
       } else if (open.side === 'SHORT' && htfPos === 1) {
         closeTrade(open, bar.close, bar.t, 'UT_HTF', i);
-      } else if (open.side === 'LONG' && u.pos === -1) {
-        closeTrade(open, bar.close, bar.t, 'UT_ENTRY', i);
-      } else if (open.side === 'SHORT' && u.pos === 1) {
-        closeTrade(open, bar.close, bar.t, 'UT_ENTRY', i);
       } else {
-        const move = signedMove(open.side, open.entry, bar.close);
+        const entryAgainst =
+          (open.side === 'LONG' && u.pos === -1) || (open.side === 'SHORT' && u.pos === 1);
+        const htfAgainst =
+          (open.side === 'LONG' && htfPos === -1) || (open.side === 'SHORT' && htfPos === 1);
         if (
-          open.mfe >= GOLD_PULSE_RULES.trailMfeTrigger &&
-          move < GOLD_PULSE_RULES.trailKeepFrac * open.mfe
+          entryAgainst &&
+          (!GOLD_PULSE_RULES.entryFlipNeedsHtfAgainst || htfAgainst)
         ) {
-          closeTrade(open, bar.close, bar.t, 'TRAIL', i);
+          closeTrade(open, bar.close, bar.t, 'UT_ENTRY', i);
+        } else {
+          const move = signedMove(open.side, open.entry, bar.close);
+          if (
+            open.mfe >= GOLD_PULSE_RULES.trailMfeTrigger &&
+            move < GOLD_PULSE_RULES.trailKeepFrac * open.mfe
+          ) {
+            closeTrade(open, bar.close, bar.t, 'TRAIL', i);
+          }
         }
       }
     }
@@ -190,7 +199,11 @@ export function runGoldPulseBacktest(opts: {
       let side: GoldSide | null = null;
       if (buyEdge && htfPos === 1) side = 'LONG';
       if (sellEdge && htfPos === -1) side = 'SHORT';
-      if (side) {
+
+      const cooldownOk =
+        !lastExitMs || tMs - lastExitMs >= GOLD_PULSE_RULES.reentryCooldownMs;
+
+      if (side && cooldownOk) {
         const entry = bar.close;
         const dist = slDistance(entry);
         open = {
@@ -240,7 +253,7 @@ export function runGoldPulseBacktest(opts: {
     maxDrawdown: Math.round(maxDd * 100) / 100,
     exitMix,
     trades,
-    note: `Yahoo ${GOLD_YAHOO_SYMBOL}: UT ${GOLD_UT_ENTRY.tf} entry + ${GOLD_UT_HTF.tf} Sector 7 G. Cost $${GOLD_PULSE_RULES.roundTripCostUsd}/trade.`,
+    note: `Yahoo ${GOLD_YAHOO_SYMBOL}: UT ${GOLD_UT_ENTRY.tf}+${GOLD_UT_HTF.tf}. Trail≥$${GOLD_PULSE_RULES.trailMfeTrigger}, cooldown ${GOLD_PULSE_RULES.reentryCooldownMs / 60000}m, 15m-flip only if 30m against. Cost $${GOLD_PULSE_RULES.roundTripCostUsd}/trade.`,
   };
 }
 

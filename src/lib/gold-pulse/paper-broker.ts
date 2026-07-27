@@ -103,12 +103,17 @@ export function updateOpenGoldTrades(
       continue;
     }
 
-    // Entry TF flip against
-    if (marked.side === 'LONG' && opts.entryPos === -1) {
-      closed.push(closeGoldTrade(marked, spot, 'UT_ENTRY'));
-      continue;
-    }
-    if (marked.side === 'SHORT' && opts.entryPos === 1) {
+    // Entry TF flip — only if HTF also against (improved rule)
+    const entryAgainst =
+      (marked.side === 'LONG' && opts.entryPos === -1) ||
+      (marked.side === 'SHORT' && opts.entryPos === 1);
+    const htfAgainst =
+      (marked.side === 'LONG' && opts.htfPos === -1) ||
+      (marked.side === 'SHORT' && opts.htfPos === 1);
+    if (
+      entryAgainst &&
+      (!GOLD_PULSE_RULES.entryFlipNeedsHtfAgainst || htfAgainst)
+    ) {
       closed.push(closeGoldTrade(marked, spot, 'UT_ENTRY'));
       continue;
     }

@@ -4,14 +4,14 @@
  */
 
 export const GOLD_PULSE_NAME = 'GoldPulse';
-export const GOLD_PULSE_VERSION = 'gold-intl-ut-v3-5m30m';
+export const GOLD_PULSE_VERSION = 'gold-intl-ut-v4-15m30m';
 
 /** Yahoo continuous gold futures */
 export const GOLD_YAHOO_SYMBOL = 'GC=F';
 export const GOLD_YAHOO_LABEL = 'Gold (International)';
 
-/** Entry timeframe UT (5m). */
-export const GOLD_UT_ENTRY = { keyValue: 1, atrPeriod: 10, tf: '5m' as const };
+/** Entry timeframe UT (15m). */
+export const GOLD_UT_ENTRY = { keyValue: 1, atrPeriod: 10, tf: '15m' as const };
 
 /** Higher TF for Sector 7 G exit / direction filter (30m). */
 export const GOLD_UT_HTF = { keyValue: 1, atrPeriod: 14, tf: '30m' as const };
@@ -52,6 +52,6 @@ export function goldPulseRuleSummary(): string[] {
     `Also exit: opposite ${GOLD_UT_ENTRY.tf} UT, trail, stop-loss.`,
     `Cost model ~$${r.roundTripCostUsd}/round trip (paper).`,
     'Paper only — no live broker orders.',
-    'Backtest: Yahoo 5m + 30m history (~1 month of 5m on Yahoo).',
+    'Backtest: Yahoo 15m + 30m history.',
   ];
 }

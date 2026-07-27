@@ -20,8 +20,8 @@ import {
 import type { GoldPulseSession } from '@/lib/gold-pulse/types';
 import type { Candle } from '@/lib/nejoic';
 
-let cache5: { at: number; candles: Candle[]; spot: number } | null = null;
-let cache30: { at: number; candles: Candle[]; spot: number } | null = null;
+let cacheEntry: { at: number; candles: Candle[]; spot: number } | null = null;
+let cacheHtf: { at: number; candles: Candle[]; spot: number } | null = null;
 const TTL = 45_000;
 
 function shell(sessionDate: string, spot: number): GoldPulseSession {
@@ -44,9 +44,9 @@ function shell(sessionDate: string, spot: number): GoldPulseSession {
 }
 
 async function loadYahooTf(
-  interval: '5m' | '30m',
-  cache: typeof cache5
-): Promise<{ candles: Candle[]; spot: number; cache: NonNullable<typeof cache5> }> {
+  interval: '15m' | '30m',
+  cache: typeof cacheEntry
+): Promise<{ candles: Candle[]; spot: number; cache: NonNullable<typeof cacheEntry> }> {
   const now = Date.now();
   if (cache && now - cache.at < TTL) {
     return { candles: cache.candles, spot: cache.spot, cache };
@@ -87,15 +87,15 @@ export async function tickGoldSession(
     sessionIn ?? (await loadGoldSession(sessionDate)) ?? shell(sessionDate, 0);
 
   try {
-    const e5 = await loadYahooTf('5m', cache5);
-    cache5 = e5.cache;
-    const e30 = await loadYahooTf('30m', cache30);
-    cache30 = e30.cache;
+    const eEntry = await loadYahooTf('15m', cacheEntry);
+    cacheEntry = eEntry.cache;
+    const eHtf = await loadYahooTf('30m', cacheHtf);
+    cacheHtf = eHtf.cache;
 
-    const spot = e5.spot || e30.spot || session.spot;
+    const spot = eEntry.spot || eHtf.spot || session.spot;
     const { decision, utEntry, utHtf } = evaluateGoldUtEntry({
-      candlesEntry: e5.candles,
-      candlesHtf: e30.candles,
+      candlesEntry: eEntry.candles,
+      candlesHtf: eHtf.candles,
     });
 
     const entryPos = (utEntry.last?.pos ?? 0) as -1 | 0 | 1;

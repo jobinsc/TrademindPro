@@ -11,7 +11,7 @@ async function main() {
         symbol: r.symbol,
         entryTf: r.entryTf,
         htfTf: r.htfTf,
-        bars5m: r.bars5m,
+        barsEntry: r.barsEntry,
         barsHtf: r.barsHtf,
         from: r.from,
         to: r.to,

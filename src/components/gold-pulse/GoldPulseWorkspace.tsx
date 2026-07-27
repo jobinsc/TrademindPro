@@ -237,7 +237,7 @@ export default function GoldPulseWorkspace() {
           </h2>
           <p className="mt-1 text-[11px] text-sky-ink/55">{bt.note}</p>
           <p className="mt-1 text-[11px] text-sky-ink/45">
-            Bars: {bt.bars5m} × {bt.entryTf} · {bt.barsHtf} × {bt.htfTf}
+            Bars: {bt.barsEntry} × {bt.entryTf} · {bt.barsHtf} × {bt.htfTf}
             {bt.from && bt.to
               ? ` · ${new Date(bt.from).toISOString().slice(0, 10)} → ${new Date(bt.to).toISOString().slice(0, 10)}`
               : ''}

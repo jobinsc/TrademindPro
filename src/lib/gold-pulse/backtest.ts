@@ -1,5 +1,5 @@
 /**
- * GoldPulse backtest — Yahoo GC=F 5m entry + 30m Sector 7 G filter/exit.
+ * GoldPulse backtest — Yahoo GC=F entry TF + HTF Sector 7 G (currently 15m + 30m).
  */
 
 import type { Candle } from '@/lib/nejoic';
@@ -34,7 +34,7 @@ export type GoldBacktestResult = {
   symbol: string;
   entryTf: string;
   htfTf: string;
-  bars5m: number;
+  barsEntry: number;
   barsHtf: number;
   from: string | null;
   to: string | null;
@@ -60,7 +60,6 @@ function slDistance(entry: number): number {
   return Math.max(entry * GOLD_PULSE_RULES.defaultSlPct, GOLD_PULSE_RULES.minSlUsd);
 }
 
-/** Latest HTF bar index with time <= t (binary search). */
 function htfIndexAt(htfTimes: number[], tMs: number): number {
   let lo = 0;
   let hi = htfTimes.length - 1;
@@ -78,13 +77,13 @@ function htfIndexAt(htfTimes: number[], tMs: number): number {
 }
 
 export function runGoldPulseBacktest(opts: {
-  candles5m: Candle[];
+  candlesEntry: Candle[];
   candlesHtf: Candle[];
 }): GoldBacktestResult {
-  const c5 = [...opts.candles5m].sort((a, b) => a.t.localeCompare(b.t));
+  const cEntry = [...opts.candlesEntry].sort((a, b) => a.t.localeCompare(b.t));
   const cHtf = [...opts.candlesHtf].sort((a, b) => a.t.localeCompare(b.t));
 
-  const ut5 = runUtBot(c5, {
+  const utEntry = runUtBot(cEntry, {
     keyValue: GOLD_UT_ENTRY.keyValue,
     atrPeriod: GOLD_UT_ENTRY.atrPeriod,
   });
@@ -146,10 +145,10 @@ export function runGoldPulseBacktest(opts: {
     open = null;
   };
 
-  for (let i = warm; i < c5.length; i++) {
-    const bar = c5[i];
-    const u = ut5[i];
-    const prev = ut5[i - 1];
+  for (let i = warm; i < cEntry.length; i++) {
+    const bar = cEntry[i];
+    const u = utEntry[i];
+    const prev = utEntry[i - 1];
     if (!u) continue;
 
     const tMs = new Date(bar.t).getTime();
@@ -162,7 +161,6 @@ export function runGoldPulseBacktest(opts: {
       open.mfe = Math.max(open.mfe, moveHi, moveLo);
       open.mae = Math.max(open.mae, -Math.min(moveHi, moveLo));
 
-      // Stop on bar extreme
       if (open.side === 'LONG' && bar.low <= open.stop) {
         closeTrade(open, open.stop, bar.t, 'SL', i);
       } else if (open.side === 'SHORT' && bar.high >= open.stop) {
@@ -186,7 +184,6 @@ export function runGoldPulseBacktest(opts: {
       }
     }
 
-    // New entry on fresh 5m buy/sell edge + HTF agree
     if (!open && prev) {
       const buyEdge = u.buy && !prev.buy;
       const sellEdge = u.sell && !prev.sell;
@@ -210,10 +207,9 @@ export function runGoldPulseBacktest(opts: {
     }
   }
 
-  // Flat leftover at last bar
-  if (open && c5.length) {
-    const last = c5[c5.length - 1];
-    closeTrade(open, last.close, last.t, 'EOD', c5.length - 1);
+  if (open && cEntry.length) {
+    const last = cEntry[cEntry.length - 1];
+    closeTrade(open, last.close, last.t, 'EOD', cEntry.length - 1);
   }
 
   const nets = trades.map((t) => t.netPnl);
@@ -227,10 +223,10 @@ export function runGoldPulseBacktest(opts: {
     symbol: GOLD_YAHOO_SYMBOL,
     entryTf: GOLD_UT_ENTRY.tf,
     htfTf: GOLD_UT_HTF.tf,
-    bars5m: c5.length,
+    barsEntry: cEntry.length,
     barsHtf: cHtf.length,
-    from: c5[0]?.t ?? null,
-    to: c5[c5.length - 1]?.t ?? null,
+    from: cEntry[0]?.t ?? null,
+    to: cEntry[cEntry.length - 1]?.t ?? null,
     tradeCount: trades.length,
     wins: wins.length,
     losses: losses.length,
@@ -244,22 +240,22 @@ export function runGoldPulseBacktest(opts: {
     maxDrawdown: Math.round(maxDd * 100) / 100,
     exitMix,
     trades,
-    note: `Yahoo ${GOLD_YAHOO_SYMBOL}: UT ${GOLD_UT_ENTRY.tf} entry + ${GOLD_UT_HTF.tf} Sector 7 G. Cost $${GOLD_PULSE_RULES.roundTripCostUsd}/trade. Yahoo 5m history is limited (~1 month).`,
+    note: `Yahoo ${GOLD_YAHOO_SYMBOL}: UT ${GOLD_UT_ENTRY.tf} entry + ${GOLD_UT_HTF.tf} Sector 7 G. Cost $${GOLD_PULSE_RULES.roundTripCostUsd}/trade.`,
   };
 }
 
 export async function fetchAndRunGoldPulseBacktest(): Promise<
   GoldBacktestResult | { ok: false; error: string }
 > {
-  const [r5, rHtf] = await Promise.all([
-    fetchYahooCandles(GOLD_YAHOO_SYMBOL, '5m', 0, GOLD_YAHOO_LABEL),
+  const [rEntry, rHtf] = await Promise.all([
+    fetchYahooCandles(GOLD_YAHOO_SYMBOL, GOLD_UT_ENTRY.tf, 0, GOLD_YAHOO_LABEL, '1mo'),
     fetchYahooCandles(GOLD_YAHOO_SYMBOL, GOLD_UT_HTF.tf, 0, GOLD_YAHOO_LABEL, '1mo'),
   ]);
-  if (!r5.ok || !r5.candles.length) {
-    return { ok: false, error: r5.error || 'Yahoo 5m failed' };
+  if (!rEntry.ok || !rEntry.candles.length) {
+    return { ok: false, error: rEntry.error || `Yahoo ${GOLD_UT_ENTRY.tf} failed` };
   }
   if (!rHtf.ok || !rHtf.candles.length) {
     return { ok: false, error: rHtf.error || `Yahoo ${GOLD_UT_HTF.tf} failed` };
   }
-  return runGoldPulseBacktest({ candles5m: r5.candles, candlesHtf: rHtf.candles });
+  return runGoldPulseBacktest({ candlesEntry: rEntry.candles, candlesHtf: rHtf.candles });
 }

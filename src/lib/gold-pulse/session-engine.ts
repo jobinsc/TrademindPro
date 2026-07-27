@@ -1,5 +1,5 @@
 /**
- * GoldPulse session — Yahoo GC=F candles + UT paper (isolated agent).
+ * GoldPulse session — Yahoo GC=F 5m + 15m UT paper (isolated agent).
  */
 
 import { fetchYahooCandles } from '@/lib/yahoo-nifty';
@@ -20,8 +20,8 @@ import {
 import type { GoldPulseSession } from '@/lib/gold-pulse/types';
 import type { Candle } from '@/lib/nejoic';
 
+let cache5: { at: number; candles: Candle[]; spot: number } | null = null;
 let cache15: { at: number; candles: Candle[]; spot: number } | null = null;
-let cache60: { at: number; candles: Candle[]; spot: number } | null = null;
 const TTL = 45_000;
 
 function shell(sessionDate: string, spot: number): GoldPulseSession {
@@ -44,19 +44,23 @@ function shell(sessionDate: string, spot: number): GoldPulseSession {
 }
 
 async function loadYahooTf(
-  interval: '15m' | '60m',
-  cache: typeof cache15
-): Promise<{ candles: Candle[]; spot: number; cache: NonNullable<typeof cache15> }> {
+  interval: '5m' | '15m',
+  cache: typeof cache5
+): Promise<{ candles: Candle[]; spot: number; cache: NonNullable<typeof cache5> }> {
   const now = Date.now();
   if (cache && now - cache.at < TTL) {
     return { candles: cache.candles, spot: cache.spot, cache };
   }
-  const r = await fetchYahooCandles(GOLD_YAHOO_SYMBOL, interval, 120, GOLD_YAHOO_LABEL);
+  const r = await fetchYahooCandles(GOLD_YAHOO_SYMBOL, interval, 200, GOLD_YAHOO_LABEL);
   if (!r.ok || !r.candles?.length) {
     if (cache) return { candles: cache.candles, spot: cache.spot, cache };
     throw new Error(r.error || `Yahoo ${interval} failed for ${GOLD_YAHOO_SYMBOL}`);
   }
-  const next = { at: now, candles: r.candles, spot: r.spot || r.candles[r.candles.length - 1].close };
+  const next = {
+    at: now,
+    candles: r.candles,
+    spot: r.spot || r.candles[r.candles.length - 1].close,
+  };
   return { candles: next.candles, spot: next.spot, cache: next };
 }
 
@@ -77,15 +81,15 @@ export async function tickGoldSession(
     sessionIn ?? (await loadGoldSession(sessionDate)) ?? shell(sessionDate, 0);
 
   try {
+    const e5 = await loadYahooTf('5m', cache5);
+    cache5 = e5.cache;
     const e15 = await loadYahooTf('15m', cache15);
     cache15 = e15.cache;
-    const e60 = await loadYahooTf('60m', cache60);
-    cache60 = e60.cache;
 
-    const spot = e15.spot || e60.spot || session.spot;
+    const spot = e5.spot || e15.spot || session.spot;
     const { decision, utEntry, utHtf } = evaluateGoldUtEntry({
-      candlesEntry: e15.candles,
-      candlesHtf: e60.candles,
+      candlesEntry: e5.candles,
+      candlesHtf: e15.candles,
     });
 
     const entryPos = (utEntry.last?.pos ?? 0) as -1 | 0 | 1;
@@ -99,7 +103,6 @@ export async function tickGoldSession(
     let openTrades = updated.open;
     const closedTrades = [...session.closedTrades, ...updated.closed];
 
-    // One paper position at a time for clarity
     if (
       !session.autoPaused &&
       openTrades.length === 0 &&

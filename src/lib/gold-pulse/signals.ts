@@ -50,14 +50,14 @@ export function evaluateGoldUtEntry(opts: {
 
   if (buy && htfPos === 1) {
     side = 'LONG';
-    reason = `15m UT buy + 60m bullish (Sector 7 G filter)`;
+    reason = `5m UT buy + 15m bullish (Sector 7 G filter)`;
   } else if (sell && htfPos === -1) {
     side = 'SHORT';
-    reason = `15m UT sell + 60m bearish (Sector 7 G filter)`;
+    reason = `5m UT sell + 15m bearish (Sector 7 G filter)`;
   } else if (buy && htfPos !== 1) {
-    reason = '15m buy ignored — 60m not bullish';
+    reason = '5m buy ignored — 15m not bullish';
   } else if (sell && htfPos !== -1) {
-    reason = '15m sell ignored — 60m not bearish';
+    reason = '5m sell ignored — 15m not bearish';
   }
 
   return {
@@ -76,8 +76,8 @@ export function evaluateGoldUtEntry(opts: {
 }
 
 export function exitReasonLabel(r: string | undefined): string {
-  if (r === 'UT_HTF') return 'Sector 7 G (60m UT against us)';
-  if (r === 'UT_ENTRY') return '15m UT flipped';
+  if (r === 'UT_HTF') return 'Sector 7 G (15m UT against us)';
+  if (r === 'UT_ENTRY') return '5m UT flipped';
   if (r === 'TRAIL') return 'profit trail';
   if (r === 'SL') return 'stop loss';
   if (r === 'MANUAL') return 'manual';

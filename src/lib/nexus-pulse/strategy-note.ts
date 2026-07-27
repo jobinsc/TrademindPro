@@ -175,6 +175,7 @@ export async function saveVault(vault: NexusStrategyVault): Promise<void> {
   await ensureDataDir();
   const next = { ...vault, updatedAt: new Date().toISOString() };
   await fs.writeFile(VAULT_PATH, JSON.stringify(next, null, 2), 'utf8');
+  void import('@/lib/nexus-pulse/nexus-cloud-store').then((m) => m.syncStrategyPackToCloud());
 }
 
 export async function loadNoteDoc(): Promise<NexusStrategyNoteDoc> {
@@ -197,6 +198,7 @@ export async function saveNoteDoc(doc: NexusStrategyNoteDoc): Promise<void> {
   await ensureDataDir();
   const next = { ...doc, updatedAt: new Date().toISOString() };
   await fs.writeFile(NOTE_PATH, JSON.stringify(next, null, 2), 'utf8');
+  void import('@/lib/nexus-pulse/nexus-cloud-store').then((m) => m.syncStrategyPackToCloud());
 }
 
 export function hashNotePassword(password: string): string {

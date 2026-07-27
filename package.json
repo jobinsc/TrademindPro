@@ -10,6 +10,7 @@
     "live": "node scripts/live.mjs",
     "live:window": "scripts\\live-window.cmd",
     "reports:daily": "node scripts/daily-session-reports.mjs",
+    "sync:nexus-cloud": "node scripts/sync-nexus-cloud.mjs",
     "prebuild": "node scripts/prebuild.mjs",
     "build": "node scripts/build.mjs",
     "start": "node scripts/start.mjs",

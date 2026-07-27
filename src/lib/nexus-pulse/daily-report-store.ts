@@ -5,7 +5,11 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { spawnSync } from 'child_process';
-import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { readNexusAdminKv, upsertNexusAdminKv } from '@/lib/nexus-pulse/nexus-admin-kv';
+import {
+  KV,
+  uploadDailyPdfToCloud,
+} from '@/lib/nexus-pulse/nexus-cloud-store';
 
 export type NexusDailyReportMeta = {
   agent: 'NexusPulse';
@@ -23,8 +27,26 @@ export type NexusDailyReportMeta = {
     laneB: number;
     laneANet: number;
     laneBNet: number;
+    winRate?: number;
+    gross?: number;
+    brokerage?: number;
+    avgWin?: number;
+    avgLoss?: number;
+    firstSpot?: number | null;
+    lastSpot?: number | null;
+    spotMove?: number | null;
+    ceCount?: number;
+    peCount?: number;
   };
   simpleStory?: string[];
+  sections?: {
+    opening?: string[];
+    market?: string[];
+    calc?: string[];
+    tradeBlocks?: string[][];
+    deskSummary?: string[];
+    suggestions?: string[];
+  };
 };
 
 export type NexusDailyIndex = {
@@ -35,7 +57,7 @@ export type NexusDailyIndex = {
 const ROOT = process.cwd();
 const DAILY_DIR = path.join(ROOT, '.data', 'nexus-pulse', 'reports', 'daily');
 const INDEX_PATH = path.join(DAILY_DIR, 'index.json');
-const DB_KEY = 'nexus_pulse_daily_reports_v1';
+const DB_KEY = KV.dailyReports;
 
 function pythonCmd(): { cmd: string; prefix: string[] } | null {
   if (process.platform === 'win32') {
@@ -57,6 +79,24 @@ function pythonCmd(): { cmd: string; prefix: string[] } | null {
 
 export function dailyPdfPath(date: string): string {
   return path.join(DAILY_DIR, `NexusPulse-Day-${date}.pdf`);
+}
+
+export function dailyMetaPath(date: string): string {
+  return path.join(DAILY_DIR, `NexusPulse-Day-${date}.meta.json`);
+}
+
+export async function loadDailyReportMeta(date: string): Promise<NexusDailyReportMeta | null> {
+  try {
+    const raw = await fs.readFile(dailyMetaPath(date), 'utf8');
+    return JSON.parse(raw) as NexusDailyReportMeta;
+  } catch {
+    /* fall through */
+  }
+  const index = await loadDailyIndex();
+  const fromIndex = index.reports.find((r) => r.date === date);
+  if (fromIndex?.sections) return fromIndex;
+  const cloud = await readNexusAdminKv<{ reports?: NexusDailyReportMeta[] }>(DB_KEY);
+  return cloud?.reports?.find((r) => r.date === date) ?? fromIndex ?? null;
 }
 
 export async function loadDailyIndex(): Promise<NexusDailyIndex> {
@@ -81,6 +121,7 @@ export async function upsertDailyReportMeta(meta: NexusDailyReportMeta): Promise
   reports.sort((a, b) => b.date.localeCompare(a.date));
   await saveDailyIndex({ updatedAt: new Date().toISOString(), reports });
   await syncDailyReportsToDatabase(reports).catch(() => undefined);
+  await uploadDailyPdfToCloud(meta.date).catch(() => undefined);
 }
 
 /** Run Python generator for one IST calendar date. */
@@ -127,47 +168,21 @@ export async function generateNexusDailyReport(date: string): Promise<{
   return result;
 }
 
-async function findAdminUserId(): Promise<string | null> {
-  const sb = getSupabaseAdmin();
-  if (!sb) return null;
-  const { data } = await sb
-    .from('profiles')
-    .select('id, email, role')
-    .eq('role', 'admin')
-    .limit(1)
-    .maybeSingle();
-  return data?.id ?? null;
-}
-
 /** Mirror date-wise report list to Supabase user_kv (admin desk database). */
 export async function syncDailyReportsToDatabase(
   reports: NexusDailyReportMeta[]
 ): Promise<{ ok: boolean; error?: string }> {
-  const sb = getSupabaseAdmin();
-  if (!sb) return { ok: false, error: 'Supabase not configured' };
-  const adminId = await findAdminUserId();
-  if (!adminId) return { ok: false, error: 'No admin profile for sync' };
-
   const payload = {
     agent: 'NexusPulse',
     updatedAt: new Date().toISOString(),
     reports,
   };
-
-  const { error } = await sb.from('user_kv').upsert(
-    {
-      user_id: adminId,
-      key: DB_KEY,
-      value: payload,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'user_id,key' }
-  );
-  if (error) return { ok: false, error: error.message };
-  return { ok: true };
+  return upsertNexusAdminKv(DB_KEY, payload);
 }
 
 export async function listDailyReports(): Promise<NexusDailyReportMeta[]> {
   const index = await loadDailyIndex();
-  return index.reports;
+  if (index.reports.length > 0) return index.reports;
+  const cloud = await readNexusAdminKv<{ reports?: NexusDailyReportMeta[] }>(DB_KEY);
+  return cloud?.reports || [];
 }

@@ -75,17 +75,10 @@ create policy "profiles_delete_admin"
   on public.profiles for delete
   using (public.is_admin() and id <> auth.uid());
 
--- Optional: NexusPulse daily reports (run separately; synced via app API sync_db)
--- create table if not exists public.nexus_pulse_daily_reports (
---   report_date date primary key,
---   agent text not null default 'NexusPulse',
---   title text not null,
---   summary jsonb not null default '{}'::jsonb,
---   pdf_path text not null,
---   created_at timestamptz not null default now(),
---   updated_at timestamptz not null default now()
--- );
--- App also stores catalog in user_kv key: nexus_pulse_daily_reports_v1 (admin).
+-- NexusPulse cloud vault (run once in SQL Editor if bucket missing):
+-- Dashboard → Storage → New bucket → id: nexus-pulse, private
+-- Or: insert into storage.buckets (id, name, public) values ('nexus-pulse', 'nexus-pulse', false) on conflict do nothing;
+-- Trades + strategy: user_kv (admin). Daily PDFs: storage bucket nexus-pulse/reports/daily/
 
 -- See src/lib/cloud-sync-keys.ts for the full allowlist.
 drop policy if exists "user_kv_select_own" on public.user_kv;

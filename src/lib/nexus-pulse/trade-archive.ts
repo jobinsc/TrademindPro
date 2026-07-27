@@ -73,26 +73,42 @@ export async function archiveClosedTrades(opts: {
     String(a.openedAt).localeCompare(String(b.openedAt))
   );
   await saveDay(day);
+  void import('@/lib/nexus-pulse/nexus-cloud-store').then((m) =>
+    m.syncTradeDayToCloud(opts.mode, opts.sessionDate)
+  );
   return added;
 }
 
 export async function listArchiveDates(mode: NexusTradeMode): Promise<string[]> {
   await ensureDirs(mode);
+  const local: string[] = [];
   try {
     const names = await fs.readdir(path.join(ROOT, mode));
-    return names
-      .filter((n) => /^\d{4}-\d{2}-\d{2}\.json$/.test(n))
-      .map((n) => n.replace(/\.json$/, ''))
-      .sort()
-      .reverse();
+    local.push(
+      ...names
+        .filter((n) => /^\d{4}-\d{2}-\d{2}\.json$/.test(n))
+        .map((n) => n.replace(/\.json$/, ''))
+    );
   } catch {
-    return [];
+    /* empty */
   }
+  const cloud = await import('@/lib/nexus-pulse/nexus-cloud-store').then((m) =>
+    m.listTradeDatesFromCloud(mode)
+  );
+  return [...new Set([...local, ...cloud])].sort().reverse();
 }
 
 export async function loadArchiveDay(
   mode: NexusTradeMode,
   date: string
 ): Promise<DayFile> {
-  return loadDay(mode, date);
+  const local = await loadDay(mode, date);
+  if (local.trades.length > 0) return local;
+  const cloud = await import('@/lib/nexus-pulse/nexus-cloud-store').then((m) =>
+    m.loadTradeDayFromCloud(mode, date)
+  );
+  if (cloud && Array.isArray(cloud.trades)) {
+    return cloud as DayFile;
+  }
+  return local;
 }

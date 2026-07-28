@@ -45,13 +45,6 @@ export function offlineUserMessage(): string {
   return 'Local server not responding — auto-retrying. If this persists: Cursor Terminal → npm run live → leave tab open.';
 }
 
-export function offlineUserMessage(): string {
-  if (!isLocalAppHost()) {
-    return `Open ${pinaxForgeLocalUrl()} on your PC (not Vercel). Then run npm run live once in Cursor Terminal and leave that tab open.`;
-  }
-  return 'Local server not responding — auto-retrying. If this persists: Cursor Terminal → npm run live → leave tab open.';
-}
-
 /** Generic API POST — works on Vercel and localhost (NexusPulse, GoldPulse, etc.). */
 export function appApiErrorMessage(): string {
   if (isLocalAppHost()) {

@@ -323,7 +323,9 @@ class PinaxUpstoxWsFeed {
 
       socket.once('open', onOpen);
       socket.once('error', onError);
-      socket.on('message', (data) => this.onMessage(data));
+      socket.on('message', (data: Buffer | ArrayBuffer | Buffer[] | string) =>
+        this.onMessage(data)
+      );
       socket.on('close', () => this.onClose());
     });
   }

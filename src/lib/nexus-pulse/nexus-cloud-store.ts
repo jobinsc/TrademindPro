@@ -74,6 +74,16 @@ async function bumpTradeIndex(mode: NexusTradeMode, date: string): Promise<void>
 }
 
 /** Push one day's trade archive JSON to user_kv. */
+export async function upsertTradeDayToCloud(
+  mode: NexusTradeMode,
+  date: string,
+  payload: unknown
+): Promise<{ ok: boolean; error?: string }> {
+  const up = await upsertNexusAdminKv(tradeDayKvKey(mode, date), payload as object);
+  if (up.ok) await bumpTradeIndex(mode, date);
+  return up;
+}
+
 export async function syncTradeDayToCloud(
   mode: NexusTradeMode,
   date: string
@@ -91,9 +101,7 @@ export async function syncTradeDayToCloud(
   } catch {
     return { ok: false, error: 'Invalid trade JSON' };
   }
-  const up = await upsertNexusAdminKv(tradeDayKvKey(mode, date), parsed);
-  if (up.ok) await bumpTradeIndex(mode, date);
-  return up;
+  return upsertTradeDayToCloud(mode, date, parsed);
 }
 
 /** Load trade day from cloud when local disk is empty (e.g. Vercel). */

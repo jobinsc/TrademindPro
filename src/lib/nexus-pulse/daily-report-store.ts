@@ -126,10 +126,21 @@ export async function loadDailyReportMeta(date: string): Promise<NexusDailyRepor
 export async function loadDailyIndex(): Promise<NexusDailyIndex> {
   try {
     const raw = await fs.readFile(dailyIndexPath(), 'utf8');
-    return JSON.parse(raw) as NexusDailyIndex;
+    const parsed = JSON.parse(raw) as NexusDailyIndex;
+    if (parsed.reports?.length) return parsed;
   } catch {
-    return { updatedAt: new Date().toISOString(), reports: [] };
+    /* fall through */
   }
+  const cloud = await readNexusAdminKv<{ reports?: NexusDailyReportMeta[]; updatedAt?: string }>(
+    DB_KEY
+  );
+  if (cloud?.reports?.length) {
+    return {
+      updatedAt: cloud.updatedAt || new Date().toISOString(),
+      reports: cloud.reports,
+    };
+  }
+  return { updatedAt: new Date().toISOString(), reports: [] };
 }
 
 async function saveDailyIndex(index: NexusDailyIndex): Promise<void> {

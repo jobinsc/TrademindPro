@@ -5,7 +5,7 @@
 
 import fs from 'fs/promises';
 import path from 'path';
-import { ensureAppDataDir, getAppDataDir } from '@/lib/app-data-dir';
+import { ensureAppDataDir, getAppDataDir, isServerlessDataHost } from '@/lib/app-data-dir';
 import type { NexusPaperTrade } from '@/lib/nexus-pulse/types';
 
 export type NexusTradeMode = 'paper' | 'live';
@@ -50,6 +50,10 @@ async function saveDay(file: DayFile): Promise<void> {
   await ensureDirs(file.mode);
   const next = { ...file, updatedAt: new Date().toISOString() };
   await fs.writeFile(dayPath(file.mode, file.date), JSON.stringify(next, null, 2), 'utf8');
+  if (isServerlessDataHost()) {
+    const { upsertTradeDayToCloud } = await import('@/lib/nexus-pulse/nexus-cloud-store');
+    await upsertTradeDayToCloud(file.mode, file.date, next).catch(() => undefined);
+  }
 }
 
 export async function clearArchiveDay(

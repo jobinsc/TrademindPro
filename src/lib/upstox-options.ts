@@ -36,6 +36,7 @@ type ContractRow = {
 };
 
 const NIFTY_INDEX_KEY = 'NSE_INDEX|Nifty 50';
+export const SENSEX_INDEX_KEY = 'BSE_INDEX|SENSEX';
 
 function round50(n: number) {
   return Math.round(n / 50) * 50;
@@ -53,12 +54,13 @@ function contractSide(row: ContractRow): OptionSide | null {
   return null;
 }
 
-/** Nearest weekly (or listed) Nifty option contracts from Upstox */
-export async function fetchNiftyOptionContracts(
+/** Option contracts for any index underlying (Nifty, Sensex, …). */
+export async function fetchIndexOptionContracts(
   accessToken: string,
+  underlyingKey: string,
   expiryKeyword?: 'current_week' | 'next_week' | 'far_week' | string
 ): Promise<ContractRow[]> {
-  const qs = new URLSearchParams({ instrument_key: NIFTY_INDEX_KEY });
+  const qs = new URLSearchParams({ instrument_key: underlyingKey });
   if (expiryKeyword) qs.set('expiry_date', expiryKeyword);
   const res = await fetch(`${UPSTOX_API_BASE}/option/contract?${qs}`, {
     headers: {
@@ -73,6 +75,21 @@ export async function fetchNiftyOptionContracts(
   }
   const json = (await res.json()) as { data?: ContractRow[] };
   return Array.isArray(json.data) ? json.data : [];
+}
+
+/** Nearest weekly (or listed) Nifty option contracts from Upstox */
+export async function fetchNiftyOptionContracts(
+  accessToken: string,
+  expiryKeyword?: 'current_week' | 'next_week' | 'far_week' | string
+): Promise<ContractRow[]> {
+  return fetchIndexOptionContracts(accessToken, NIFTY_INDEX_KEY, expiryKeyword);
+}
+
+export async function fetchSensexOptionContracts(
+  accessToken: string,
+  expiryKeyword?: 'current_week' | 'next_week' | 'far_week' | string
+): Promise<ContractRow[]> {
+  return fetchIndexOptionContracts(accessToken, SENSEX_INDEX_KEY, expiryKeyword);
 }
 
 /**

@@ -170,6 +170,35 @@ const navGroups: NavGroup[] = [
         ],
       },
       {
+        href: '/app/nexus-pulse-b',
+        label: 'NexusPulse (Sector 7 B)',
+        icon: Radio,
+        exact: true,
+        children: [
+          {
+            href: '/app/nexus-pulse-b/strategy-note',
+            label: 'Strategy Note',
+            icon: FileText,
+            exact: true,
+            adminOnly: true,
+          },
+          {
+            href: '/app/nexus-pulse-b/trade-archive',
+            label: 'Trade Archive',
+            icon: BookOpen,
+            exact: true,
+            adminOnly: true,
+          },
+          {
+            href: '/app/nexus-pulse-b/daily-reports',
+            label: 'Daily Reports',
+            icon: FileText,
+            exact: true,
+            adminOnly: true,
+          },
+        ],
+      },
+      {
         href: '/app/gold-pulse',
         label: 'GoldPulse (Intl)',
         icon: Coins,

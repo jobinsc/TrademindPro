@@ -45,6 +45,25 @@ export function offlineUserMessage(): string {
   return 'Local server not responding — auto-retrying. If this persists: Cursor Terminal → npm run live → leave tab open.';
 }
 
+/** Parse JSON from fetch Response; empty/non-JSON bodies become a clear error. */
+async function readJsonResponse<T>(res: Response): Promise<T & { ok?: boolean; error?: string }> {
+  const text = await res.text();
+  if (!text.trim()) {
+    throw new Error(
+      res.ok
+        ? 'Empty server response'
+        : `Request failed (${res.status}) — empty response from server`
+    );
+  }
+  try {
+    return JSON.parse(text) as T & { ok?: boolean; error?: string };
+  } catch {
+    throw new Error(
+      `Server returned non-JSON (${res.status}): ${text.slice(0, 160).replace(/\s+/g, ' ')}`
+    );
+  }
+}
+
 /** Generic API POST — works on Vercel and localhost (NexusPulse, GoldPulse, etc.). */
 export function appApiErrorMessage(): string {
   if (isLocalAppHost()) {
@@ -84,7 +103,7 @@ export async function fetchAppPost<T>(opts: {
         cache: 'no-store',
       });
 
-      const data = (await res.json()) as T & { ok?: boolean; error?: string };
+      const data = await readJsonResponse<T>(res);
       if (!res.ok || data.ok === false) {
         throw new Error(data.error || `Request failed (${res.status})`);
       }
@@ -140,7 +159,7 @@ export async function fetchLocalPost<T>(opts: {
         cache: 'no-store',
       });
 
-      const data = (await res.json()) as T & { ok?: boolean; error?: string };
+      const data = await readJsonResponse<T>(res);
       if (!res.ok || data.ok === false) {
         throw new Error(data.error || `Request failed (${res.status})`);
       }

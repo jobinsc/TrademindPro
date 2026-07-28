@@ -28,6 +28,11 @@ const PING_TIMEOUT_MS = 8000;
 const REPORTS_CHECK_MS = 60_000; // once per minute after boot
 const REPORTS_CUTOFF_MIN = 15 * 60 + 15; // 15:15 IST
 
+// Optional native ws addons can break on some Windows installs.
+// Force the pure-JS fallback so live quote updates stay stable.
+process.env.WS_NO_BUFFER_UTIL = '1';
+process.env.WS_NO_UTF_8_VALIDATE = '1';
+
 let stopping = false;
 let child = null;
 let healthTimer = null;
@@ -234,6 +239,16 @@ function startNext() {
     }
     if (signal === 'SIGINT' || signal === 'SIGTERM') {
       process.exit(0);
+      return;
+    }
+    // On some Windows setups Next can hand off and the launching process exits
+    // cleanly while the real server is still alive on :3000. In that case,
+    // attach as a watchdog instead of spawning another copy and causing EADDRINUSE.
+    await waitMs(1000);
+    if (await pingOk()) {
+      watchdogOnly = true;
+      log('Next launcher exited but :3000 is healthy — attaching watchdog only.');
+      startHealth();
       return;
     }
     log(`Next.js exited (code=${code ?? 'null'}) — auto-restarting in ${RESTART_DELAY_MS}ms…`);

@@ -4,7 +4,6 @@
  */
 
 import protobuf from 'protobufjs';
-import WebSocket from 'ws';
 import { UPSTOX_V3_BASE } from '@/lib/upstox-historical';
 
 const AUTH_URL = `${UPSTOX_V3_BASE}/feed/market-data-feed/authorize`;
@@ -159,7 +158,7 @@ function keyVariants(key: string): string[] {
 }
 
 class PinaxUpstoxWsFeed {
-  private ws: WebSocket | null = null;
+  private ws: any = null;
   private accessToken: string | null = null;
   private connecting: Promise<void> | null = null;
   private intentionalClose = false;
@@ -172,7 +171,8 @@ class PinaxUpstoxWsFeed {
   private lastError: string | null = null;
 
   isConnected(): boolean {
-    return this.ws?.readyState === WebSocket.OPEN;
+    // ws OPEN constant is 1; avoid importing WebSocket for type/runtime stability.
+    return this.ws?.readyState === 1;
   }
 
   getLastTickAt(): string | null {
@@ -295,8 +295,19 @@ class PinaxUpstoxWsFeed {
       throw new Error(this.lastError);
     }
 
-    await new Promise<void>((resolve, reject) => {
-      const socket = new WebSocket(uri, { followRedirects: true });
+    await new Promise<void>(async (resolve, reject) => {
+      // ws can load optional native addons (bufferutil/utf-8-validate).
+      // On some Windows setups those addons are broken and crash with:
+      //   TypeError: bufferUtil.mask is not a function
+      // Disable those addons right before importing `ws`.
+      process.env.WS_NO_BUFFER_UTIL = '1';
+      process.env.WS_NO_UTF_8_VALIDATE = '1';
+
+      const wsMod = await import('ws');
+      const WebSocketCtor = wsMod.default as any;
+
+      // Keep perMessageDeflate off as an extra guard.
+      const socket = new WebSocketCtor(uri, { followRedirects: true, perMessageDeflate: false });
       this.ws = socket;
 
       const onOpen = () => {
@@ -307,7 +318,7 @@ class PinaxUpstoxWsFeed {
       };
       const onError = (err: Error) => {
         this.lastError = err.message || 'WS error';
-        if (socket.readyState !== WebSocket.OPEN) reject(err);
+        if (socket.readyState !== 1) reject(err);
       };
 
       socket.once('open', onOpen);
@@ -331,7 +342,7 @@ class PinaxUpstoxWsFeed {
   }
 
   private sendSubUnsub(method: 'sub' | 'unsub', keys: string[]): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || keys.length === 0) return;
+    if (!this.ws || this.ws.readyState !== 1 || keys.length === 0) return;
     const payload = {
       guid: `pf-${Date.now().toString(36)}`,
       method,
@@ -344,7 +355,7 @@ class PinaxUpstoxWsFeed {
     this.ws.send(Buffer.from(JSON.stringify(payload)));
   }
 
-  private onMessage(data: WebSocket.RawData): void {
+  private onMessage(data: any): void {
     try {
       const buf = Buffer.isBuffer(data)
         ? data

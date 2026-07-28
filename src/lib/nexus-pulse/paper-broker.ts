@@ -101,8 +101,9 @@ export function updateOpenTrades(
   open: NexusPaperTrade[],
   ltpByKey: Map<string, number>,
   opts: {
-    ut3mSell?: boolean;
-    ut3mBuy?: boolean;
+    /** Opposite 3m UT signal on a new closed 3m bar (matches BOTS real-option study). */
+    ut3mSellEdge?: boolean;
+    ut3mBuyEdge?: boolean;
     pos5m?: -1 | 0 | 1;
     forceFlat?: boolean;
     squareOff?: boolean;
@@ -127,7 +128,7 @@ export function updateOpenTrades(
       closed.push(closeNexusTrade(marked, ltp, 'LANE_B_15'));
       continue;
     }
-    if (ltp <= marked.stopLossPremium) {
+    if (NEXUS_PULSE_RULES.mandatoryStopLoss && ltp <= marked.stopLossPremium) {
       closed.push(closeNexusTrade(marked, Math.max(ltp, marked.stopLossPremium - 0.5), 'SL'));
       continue;
     }
@@ -135,11 +136,11 @@ export function updateOpenTrades(
       closed.push(closeNexusTrade(marked, ltp, 'TRAIL'));
       continue;
     }
-    if (marked.side === 'CE' && opts.ut3mSell) {
+    if (marked.side === 'CE' && opts.ut3mSellEdge) {
       closed.push(closeNexusTrade(marked, ltp, 'UT_3M'));
       continue;
     }
-    if (marked.side === 'PE' && opts.ut3mBuy) {
+    if (marked.side === 'PE' && opts.ut3mBuyEdge) {
       closed.push(closeNexusTrade(marked, ltp, 'UT_3M'));
       continue;
     }

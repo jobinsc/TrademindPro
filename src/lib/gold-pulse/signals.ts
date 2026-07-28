@@ -14,6 +14,10 @@ function snap(tf: string, params: { keyValue: number; atrPeriod: number }, bars:
   };
 }
 
+/**
+ * BOTS / NexusPulse entry: new entry-TF Buy/Sell + HTF pos agrees.
+ * Gold: Buy+HTF long → LONG; Sell+HTF short → SHORT.
+ */
 export function evaluateGoldUtEntry(opts: {
   candlesEntry: Candle[];
   candlesHtf: Candle[];
@@ -46,18 +50,18 @@ export function evaluateGoldUtEntry(opts: {
   const htfPos = (lastH?.pos ?? 0) as -1 | 0 | 1;
 
   let side: GoldSide | 'FLAT' = 'FLAT';
-  let reason = 'No aligned UT entry';
+  let reason = 'No aligned Sector 7 entry';
 
   if (buy && htfPos === 1) {
     side = 'LONG';
-    reason = `15m UT buy + 30m bullish (Sector 7 G filter)`;
+    reason = `${GOLD_UT_ENTRY.tf} Buy + ${GOLD_UT_HTF.tf} long → LONG (BOTS idea)`;
   } else if (sell && htfPos === -1) {
     side = 'SHORT';
-    reason = `15m UT sell + 30m bearish (Sector 7 G filter)`;
+    reason = `${GOLD_UT_ENTRY.tf} Sell + ${GOLD_UT_HTF.tf} short → SHORT (BOTS idea)`;
   } else if (buy && htfPos !== 1) {
-    reason = '15m buy ignored — 30m not bullish';
+    reason = `${GOLD_UT_ENTRY.tf} buy ignored — ${GOLD_UT_HTF.tf} not long`;
   } else if (sell && htfPos !== -1) {
-    reason = '15m sell ignored — 30m not bearish';
+    reason = `${GOLD_UT_ENTRY.tf} sell ignored — ${GOLD_UT_HTF.tf} not short`;
   }
 
   return {
@@ -76,9 +80,9 @@ export function evaluateGoldUtEntry(opts: {
 }
 
 export function exitReasonLabel(r: string | undefined): string {
-  if (r === 'UT_HTF') return 'Sector 7 G (30m UT against us)';
-  if (r === 'UT_ENTRY') return '15m UT flipped';
-  if (r === 'TRAIL') return 'profit trail';
+  if (r === 'UT_HTF') return `Sector 7 G (${GOLD_UT_HTF.tf} against)`;
+  if (r === 'UT_ENTRY') return `${GOLD_UT_ENTRY.tf} UT flipped`;
+  if (r === 'TRAIL') return 'profit trail (BOTS)';
   if (r === 'SL') return 'stop loss';
   if (r === 'MANUAL') return 'manual';
   if (r === 'EOD') return 'session flat';

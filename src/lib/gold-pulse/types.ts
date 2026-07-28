@@ -1,4 +1,5 @@
 import type { UtBotBar } from '@/lib/nexus-pulse/ut-bot';
+import type { GoldStrategyId } from '@/lib/gold-pulse/strategies';
 
 export type GoldSide = 'LONG' | 'SHORT';
 
@@ -29,6 +30,8 @@ export type GoldPaperTrade = {
   exitReason?: GoldExitReason;
   grossPnl?: number;
   netPnl?: number;
+  /** Paper strategy that opened this trade */
+  strategyId?: GoldStrategyId;
 };
 
 export type GoldUtSnap = {
@@ -57,6 +60,8 @@ export type GoldPulseSession = {
   spot: number;
   symbol: string;
   dataSource: 'yahoo';
+  /** Which strategy may open new paper trades (null = paper entries off). */
+  paperStrategyId: GoldStrategyId | null;
   utEntry: GoldUtSnap | null;
   utHtf: GoldUtSnap | null;
   lastSignal: GoldSignal | null;

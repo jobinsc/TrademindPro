@@ -26,7 +26,12 @@ export type NexusStrategyNoteDoc = {
   title: string;
   updatedAt: string;
   bodyMarkdown: string;
+  /** Bump when default note content changes — auto-refresh on load. */
+  schemaVersion?: number;
 };
+
+/** Increment when `defaultStrategyNoteMarkdown()` changes materially. */
+export const NEXUS_STRATEGY_NOTE_SCHEMA = 3;
 
 function hashSecret(value: string, salt = 'nexus-note'): string {
   return createHash('sha256').update(`${salt}:${value}:trademind-nexus`).digest('hex');
@@ -47,103 +52,116 @@ export function defaultStrategyNoteMarkdown(): string {
   return `# NexusPulse — Full Strategy Note (Admin)
 
 ## 1. What this strategy is
-NexusPulse is a **separate** Nifty 50 options paper (and future live) desk.
-It does **not** share logic with PinaxForge, Blink, ATM Lab, Nejoic, or Jimbo.
+NexusPulse matches the **D:\\BOTS\\NexusPulse** desk (the engine behind the real-option PDF study).
+It is a **separate** Nifty 50 options **paper** desk (live orders off until you approve them).
+It does **not** share entries/exits with PinaxForge, Blink, or ATM Lab.
 
-**Instrument:** Nifty options only (buy premium — CE or PE).
-**Style:** Systematic UT Bot timing + dual session lanes.
-**Lot:** 1 lot (Nifty lot size 65).
-**Cost awareness:** round-trip cost is real (desk model ~₹160; reports may use ₹70 for study).
+| Item | Rule |
+|------|------|
+| **Instrument** | Nifty index options — **buy premium only** (CE or PE) |
+| **Signal name in UI** | **Sector 7 A** (UT Bot math; internal codes \`UT_3M\` / \`UT_5M\`) |
+| **Lot** | **1 lot** (Nifty lot size **65**) |
+| **Net cost model** | **₹70** deducted per **closed** trade (full round trip, 1 lot) |
+| **Gross P&amp;L** | \`(exit premium − entry premium) × 65\` |
+| **Net P&amp;L** | Gross − **₹70** |
 
-Display name for the 5m UT exit: **Sector 7 A** (internal code still \`UT_5M\`).
+**Real-option study** (NexusPulse page) replays the PDF method: UT signals + **real Upstox ATM option 1m closes** (historical study uses **strict ATM**, no ₹50 shift).
+
+**Live paper** uses the **same signals and exits** as the bot, plus your **₹50 premium strike rule** (below).
 
 ---
 
-## 2. Ground / foundation for taking a trade
-A trade is allowed only when **all** of the following are true:
-
-1. **Market is open for entries** after **09:15 IST**.
-2. A **new 3-minute UT Bot edge** appears (fresh Buy or Sell on the closed 3m bar — not a stale signal).
-3. **5-minute UT direction agrees:**
-   - 3m Buy + 5m pos = long → **buy ATM CE**
-   - 3m Sell + 5m pos = short → **buy ATM PE**
-4. The **lane window** allows new entries (see Lane A / Lane B below).
-5. We buy **liquid front-week** ATM-ish CE/PE (premium long only — never short premium in this desk).
+## 2. When we enter (must all be true)
+1. Session **Start** is running and Upstox is connected.
+2. **Only the lane(s) you selected** before start can open new trades (\`current_bans\`, \`morning_open_stop_15\`, or both).
+3. Time is inside that lane’s **entry window** (see §4).
+4. A **new 3m Sector 7 A edge** on the **last closed 3m bar** (not a repeat on the same bar).
+5. **5m Sector 7 A agrees:**
+   - 3m **Buy** + 5m **long** → **CE**
+   - 3m **Sell** + 5m **short** → **PE**
+6. Optional **daily loss guard**: if enabled, no new entries after day net hits your limit.
+7. **Front-week** Nifty option contract resolves with a valid live premium.
 
 If 3m fires but 5m does not agree → **no trade**.
-If the edge is not new (same bar already used) → **no trade**.
 
 ---
 
-## 3. Indicator setup (UT Bot — your Pine)
-Port of TradingView **UT Bot Alerts**:
+## 3. Strike & premium (live paper only)
+Study/PDF uses **ATM** strike only. **Live paper** adds:
 
-| Timeframe | Key Value | ATR Period | Role |
-|-----------|-----------|------------|------|
-| **3m** | 1 | 10 | Entry trigger (Buy / Sell labels) |
-| **5m** | 1 | 14 | Direction filter (pos long / short) |
+1. Start from **ATM** (nearest 50 strike to Nifty).
+2. If **ATM premium < ₹50**, step **CE to lower strikes** / **PE to higher strikes** until premium **≥ ₹50** (when chain quotes allow).
+3. **Selected CE/PE board:** while **no open trade** on that side, if shown **LTP < ₹50**, re-select a **₹50+** contract.
+4. **While a trade is open** on CE or PE, that side’s **strike is locked** until exit; then selection can move again.
 
-Logic summary:
-- ATR trailing stop with key × ATR.
-- Buy when price is above trail and EMA(1) crosses above trail.
-- Sell when price is below trail and trail crosses above EMA(1).
-- Position state (\`pos\`) stays long or short until opposite cross.
-
-We resample **1m Upstox candles** into 3m and 5m locally.
+What you trade is what the **Selected CE/PE** cards show at entry time.
 
 ---
 
-## 4. Two lanes (kept separate — never merge P&L as one trade)
-Both lanes can take the **same signal** as **separate paper trades**.
+## 4. Sector 7 A (indicator)
+Same as TradingView UT Bot (Heikin Ashi off):
 
-### Lane A — Current bans (\`current_bans\`)
-- Entries from 09:15 IST, but **no new entries 09:15–09:30**.
-- **No new entries 14:00–14:45**.
-- Square-off all remaining at **15:14 IST**.
+| TF | Key | ATR | Use |
+|----|-----|-----|-----|
+| **3m** | 1 | 10 | Entry (Buy/Sell on closed bar) |
+| **5m** | 1 | 14 | Direction filter + exit filter |
 
-### Lane B — Morning open / stop 15:00 (\`morning_open_stop_15\`)
-- Entries from **09:15 IST**.
-- From **15:00 IST**: no new entries + **force flat**.
-- Square-off residual at **15:14 IST**.
-
-Review each lane separately (wins, losses, High/Low, time taken).
+Nifty **1m candles from Upstox** are resampled to 3m and 5m in-app.
 
 ---
 
-## 5. Risk & management rules
-- **Mandatory stop loss** at entry: ~20% of entry premium (min ~₹8 premium pts).
-- **Trail:** after MFE ≥ **12** premium pts, exit if open profit falls below **50% of MFE**.
-- **Exit on opposite 3m UT** (CE exits on 3m Sell; PE exits on 3m Buy).
-- **Exit on Sector 7 A (5m flip against you):** CE exits if 5m pos turns short; PE if 5m turns long.
-- Track **High / Low** of option premium after entry until close (any exit reason).
-- Record **Opened / Closed / Time taken (HH:MM)** for every trade.
+## 5. Two lanes (separate paper trades — do not merge P&amp;L)
+
+### Lane A — \`current_bans\`
+- No new entries **09:15–09:30**
+- No new entries **14:00–14:45**
+- Square-off **15:14 IST**
+
+### Lane B — \`morning_open_stop_15\` (default)
+- New entries from **09:15**
+- From **15:00**: no new entries + **force flat** open Lane B trades
+- Square-off **15:14 IST**
+
+The same signal may open **one trade per active lane** (two rows if both lanes are selected).
 
 ---
 
-## 6. How a pro uses this desk (discipline)
-1. Bias from Nifty structure first (study) — UT is the **trigger**, not a license to overtrade.
-2. Run **one live agent** at a time to avoid Upstox 429 rate limits.
-3. After any exit: pause, re-check 3m/5m alignment — no revenge flip every candle.
-4. Respect cost: small noise moves often lose after brokerage.
-5. Keep paper archive by **date** and keep lanes separate in review.
+## 6. Exits & management (same as BOTS / PDF — **no premium stop loss**)
+There is **no** mandatory 20% premium SL on this desk (matches \`backtest_session_real_options.py\`).
+
+Exit reasons, in practice:
+1. **Trail:** after option MFE ≥ **12** premium points, exit if open profit < **50% of MFE**.
+2. **Opposite 3m Sector 7 A** on a **new closed 3m bar** (CE on 3m Sell, PE on 3m Buy).
+3. **5m against:** CE if 5m turns short; PE if 5m turns long.
+4. **Lane B:** force flat from **15:00** (Lane B only).
+5. **Square-off 15:14** all lanes.
+
+Track high/low premium and open/close times in the trade archive.
 
 ---
 
-## 7. Paper vs Live
-- **Paper vault:** every closed paper trade is archived under \`.data/nexus-pulse/trades/paper/YYYY-MM-DD.json\`.
-- **Live vault:** same shape under \`.data/nexus-pulse/trades/live/\` — ready when live orders are enabled.
-- Live orders stay **off** until explicitly approved (\`liveOrdersAllowed\` flag).
+## 7. Running the desk tomorrow onward
+1. \`npm run live\` — keep terminal open.
+2. Connect **Upstox** in Settings.
+3. NexusPulse: choose **lane(s)** and loss guard **before** **Start**.
+4. **Start** polling (~15s flat, ~8s in trade). Paper entries fire automatically on signals.
+5. **Clear paper trades** resets today’s session + archive if you need a clean day.
+6. **Real option study** checks history with Upstox (up to ~31 days); not the same as today’s paper archive.
 
 ---
 
-## 8. What this note is for
-This document is the **single source of truth** for why NexusPulse enters, manages, and exits.
-Only **admin** can open it, and only after the **extra note password**.
-If the password is forgotten, admin can reset via **OTP to Gmail**.
+## 8. Paper vs live vault
+- Paper: \`.data/nexus-pulse/trades/paper/YYYY-MM-DD.json\`
+- Live vault path exists for when \`liveOrdersAllowed\` is enabled — **currently off**.
 
 ---
 
-*Last scaffolded for NexusPulse UT dual-lane desk. Update this note whenever rules change.*
+## 9. Admin note vault
+This note is password-gated for admin. Reset via Gmail OTP if needed.
+
+---
+
+*Schema ${NEXUS_STRATEGY_NOTE_SCHEMA} — aligned with BOTS NexusPulse V2 + live ₹50 strike rule + ₹70 net cost.*
 `;
 }
 
@@ -182,12 +200,24 @@ export async function loadNoteDoc(): Promise<NexusStrategyNoteDoc> {
   await ensureDataDir();
   try {
     const raw = await fs.readFile(NOTE_PATH, 'utf8');
-    return JSON.parse(raw) as NexusStrategyNoteDoc;
+    const doc = JSON.parse(raw) as NexusStrategyNoteDoc;
+    if ((doc.schemaVersion ?? 0) < NEXUS_STRATEGY_NOTE_SCHEMA) {
+      const refreshed: NexusStrategyNoteDoc = {
+        title: doc.title || 'NexusPulse Strategy Note',
+        updatedAt: new Date().toISOString(),
+        bodyMarkdown: defaultStrategyNoteMarkdown(),
+        schemaVersion: NEXUS_STRATEGY_NOTE_SCHEMA,
+      };
+      await saveNoteDoc(refreshed);
+      return refreshed;
+    }
+    return doc;
   } catch {
     const doc: NexusStrategyNoteDoc = {
       title: 'NexusPulse Strategy Note',
       updatedAt: new Date().toISOString(),
       bodyMarkdown: defaultStrategyNoteMarkdown(),
+      schemaVersion: NEXUS_STRATEGY_NOTE_SCHEMA,
     };
     await saveNoteDoc(doc);
     return doc;

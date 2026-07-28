@@ -1,0 +1,25 @@
+//@version=5
+indicator("AK MACD BB Gold Pane+", shorttitle="MACD BB Pane+", overlay=false, precision=4)
+
+bbLen   = input.int(10, "BB Periods", minval=1)
+bbDev   = input.float(1.0, "BB Deviations", minval=0.1, step=0.1)
+fastLen = input.int(12, "MACD Fast", minval=1)
+slowLen = input.int(26, "MACD Slow", minval=1)
+
+macd  = ta.ema(close, fastLen) - ta.ema(close, slowLen)
+basis = ta.sma(macd, bbLen)
+dev   = ta.stdev(macd, bbLen) * bbDev
+upper = basis + dev
+lower = basis - dev
+
+u = plot(upper, "Upper", color=color.gray, linewidth=2)
+l = plot(lower, "Lower", color=color.gray, linewidth=2)
+fill(u, l, color=color.new(color.blue, 75), title="BB Fill")
+
+mcColor = macd >= upper ? color.lime : macd <= lower ? color.aqua : color.red
+plot(macd, "MACD", color=mcColor, style=plot.style_circles, linewidth=3)
+hline(0, "Zero", color=color.orange, linewidth=2)
+
+// First break dots in pane
+plotshape(macd > upper and macd[1] <= upper[1], "First up", style=shape.circle, location=location.absolute, color=color.yellow, size=size.tiny)
+plotshape(macd < lower and macd[1] >= lower[1], "First dn", style=shape.circle, location=location.absolute, color=color.fuchsia, size=size.tiny)

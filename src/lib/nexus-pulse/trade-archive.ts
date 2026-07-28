@@ -48,6 +48,13 @@ async function saveDay(file: DayFile): Promise<void> {
   await fs.writeFile(dayPath(file.mode, file.date), JSON.stringify(next, null, 2), 'utf8');
 }
 
+export async function clearArchiveDay(
+  mode: NexusTradeMode,
+  date: string
+): Promise<void> {
+  await saveDay({ date, mode, updatedAt: new Date().toISOString(), trades: [] });
+}
+
 /** Upsert closed trades for a session date into the paper/live archive. */
 export async function archiveClosedTrades(opts: {
   sessionDate: string;

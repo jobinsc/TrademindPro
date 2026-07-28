@@ -27,6 +27,8 @@ import type { PinaxOptionCandidate } from '@/lib/pinax-forge/types';
 
 type ContractRow = Awaited<ReturnType<typeof fetchNiftyOptionContracts>>[number];
 
+const NEXUS_MIN_PREMIUM_FLOOR = 50;
+
 function toCandidate(
   contract: NiftyOptionContract,
   premium: number,
@@ -63,10 +65,11 @@ function tryPickPair(
   spot: number,
   expiry: string,
   sessionDate: string
-): { ce: NiftyOptionContract | null; pe: NiftyOptionContract | null } {
+): { rows: ContractRow[]; ce: NiftyOptionContract | null; pe: NiftyOptionContract | null } {
   const ceStrike = preferredStrikeForSide(spot, 'CE', expiry, sessionDate);
   const peStrike = preferredStrikeForSide(spot, 'PE', expiry, sessionDate);
   return {
+    rows,
     ce: pickAtmContract(rows, spot, 'CE', ceStrike),
     pe: pickAtmContract(rows, spot, 'PE', peStrike),
   };
@@ -94,6 +97,7 @@ async function resolvePinaxFrontWeekContracts(
 ): Promise<{
   expiryMode: 'current_week' | 'next_week' | 'listed';
   expiry: string | null;
+  rows: ContractRow[];
   ce: NiftyOptionContract | null;
   pe: NiftyOptionContract | null;
 }> {
@@ -118,7 +122,7 @@ async function resolvePinaxFrontWeekContracts(
   for (const expiry of frontCandidates) {
     const { ce, pe } = tryPickPair(byExpiry.get(expiry) || [], spot, expiry, sessionDate);
     if (ce && pe) {
-      return { expiryMode: 'current_week', expiry, ce, pe };
+      return { expiryMode: 'current_week', expiry, rows: byExpiry.get(expiry) || [], ce, pe };
     }
   }
 
@@ -132,11 +136,11 @@ async function resolvePinaxFrontWeekContracts(
     );
     const { ce, pe } = tryPickPair(rows, spot, expiry, sessionDate);
     if (ce && pe) {
-      return { expiryMode: 'next_week', expiry, ce, pe };
+      return { expiryMode: 'next_week', expiry, rows, ce, pe };
     }
   }
 
-  return { expiryMode: 'listed', expiry: null, ce: null, pe: null };
+  return { expiryMode: 'listed', expiry: null, rows: [], ce: null, pe: null };
 }
 
 /** Normalize for loose quote matching (Upstox mixes | / : and token vs symbol keys). */
@@ -148,6 +152,129 @@ function quoteIdentity(parts: string[]): string {
  * Resolve CE/PE lastPrice the same robust way as manage LTP:
  * exact key → trading-symbol/side match on market quotes → option-greek last_price.
  */
+function distanceFromPreferredStrike(
+  strike: number,
+  side: OptionSide,
+  spot: number,
+  expiry: string,
+  sessionDate: string
+): number {
+  const preferred = preferredStrikeForSide(spot, side, expiry, sessionDate) ?? Math.round(spot / 50) * 50;
+  return Math.abs(strike - preferred);
+}
+
+function contractRowToContract(
+  row: ContractRow,
+  side: OptionSide,
+  expiry: string
+): NiftyOptionContract | null {
+  const option = String(row.instrument_type || row.option_type || '').toUpperCase().trim();
+  const symbol = String(row.trading_symbol || '').toUpperCase();
+  const isSide = option === side || symbol.endsWith(side) || symbol.includes(` ${side} `);
+  const strike = Number(row.strike_price ?? 0);
+  const rowExpiry = String(row.expiry || '').slice(0, 10);
+  const instrumentKey = String(row.instrument_key || '').trim();
+  const tradingSymbol = String(row.trading_symbol || '').trim();
+  if (!isSide || !instrumentKey || !tradingSymbol || !strike || rowExpiry !== expiry) return null;
+  return {
+    instrumentKey,
+    tradingSymbol,
+    strike,
+    option: side,
+    expiry: rowExpiry,
+    lotSize: Number(row.lot_size || 0) || 75,
+  };
+}
+
+function nearestContractsForSide(opts: {
+  rows: ContractRow[];
+  side: OptionSide;
+  spot: number;
+  expiry: string;
+  sessionDate: string;
+  limit?: number;
+}): NiftyOptionContract[] {
+  const preferred =
+    preferredStrikeForSide(opts.spot, opts.side, opts.expiry, opts.sessionDate) ??
+    Math.round(opts.spot / 50) * 50;
+  const contracts = opts.rows
+    .map((row) => contractRowToContract(row, opts.side, opts.expiry))
+    .filter((row): row is NiftyOptionContract => Boolean(row))
+    .sort((a, b) => a.strike - b.strike);
+
+  // Exact user rule:
+  // - CE below 50 -> step DOWN to lower strikes until premium > 50
+  // - PE below 50 -> step UP to higher strikes until premium > 50
+  const primary =
+    opts.side === 'CE'
+      ? contracts.filter((c) => c.strike <= preferred).sort((a, b) => b.strike - a.strike)
+      : contracts.filter((c) => c.strike >= preferred).sort((a, b) => a.strike - b.strike);
+  const secondary =
+    opts.side === 'CE'
+      ? contracts.filter((c) => c.strike > preferred).sort((a, b) => a.strike - b.strike)
+      : contracts.filter((c) => c.strike < preferred).sort((a, b) => b.strike - a.strike);
+
+  // Important: do NOT hard-cap here. When ATM premium < 50,
+  // the first `> 50` strike might be farther than a small window.
+  return [...primary, ...secondary];
+}
+
+function chooseContractNearPremiumFloor(opts: {
+  rows: ContractRow[];
+  side: OptionSide;
+  spot: number;
+  expiry: string;
+  sessionDate: string;
+  quotes: UpstoxQuote[];
+  greeks: UpstoxOptionGreeks[];
+  minPremiumFloor?: number;
+}): { contract: NiftyOptionContract | null; premium: number | null; isAtm: boolean } {
+  const minFloor = opts.minPremiumFloor ?? NEXUS_MIN_PREMIUM_FLOOR;
+  const baseStrike = preferredStrikeForSide(opts.spot, opts.side, opts.expiry, opts.sessionDate);
+  const atm = pickAtmContract(opts.rows, opts.spot, opts.side, baseStrike);
+  const atmPremium = atm ? resolveOptionPremium(atm, opts.quotes, opts.greeks) : null;
+  // User rule: if ATM premium is below 50, trade strikes with premium >= 50.
+  if (atm && atmPremium && atmPremium >= minFloor) {
+    return { contract: atm, premium: atmPremium, isAtm: true };
+  }
+
+  const sideRows = nearestContractsForSide({
+    rows: opts.rows,
+    side: opts.side,
+    spot: opts.spot,
+    expiry: opts.expiry,
+    sessionDate: opts.sessionDate,
+  });
+
+  let best: { contract: NiftyOptionContract; premium: number; dist: number } | null = null;
+  for (const contract of sideRows) {
+    const premium = resolveOptionPremium(contract, opts.quotes, opts.greeks);
+    if (!premium || premium < minFloor) continue;
+    const dist = distanceFromPreferredStrike(
+      contract.strike,
+      opts.side,
+      opts.spot,
+      opts.expiry,
+      opts.sessionDate
+    );
+    if (!best) {
+      best = { contract, premium, dist };
+      break;
+    }
+  }
+
+  if (best) return { contract: best.contract, premium: best.premium, isAtm: false };
+  // Simple fallback: if ATM is below 50, step one strike in the user-requested
+  // direction (CE down, PE up) instead of leaving the board empty.
+  const stepped = sideRows.find((contract) => contract.strike !== atm?.strike) ?? null;
+  if (stepped) {
+    const premium = resolveOptionPremium(stepped, opts.quotes, opts.greeks);
+    if (premium && premium > 0) {
+      return { contract: stepped, premium, isAtm: false };
+    }
+  }
+  return { contract: atm, premium: atmPremium, isAtm: true };
+}
 function resolveOptionPremium(
   contract: NiftyOptionContract,
   quotes: UpstoxQuote[],
@@ -204,7 +331,7 @@ export async function pickPinaxOptions(opts: {
 
     const atmCe = resolved.ce;
     const atmPe = resolved.pe;
-    if (!atmCe || !atmPe) {
+    if (!atmCe || !atmPe || !resolved.expiry) {
       return {
         candidates: [],
         picked: null,
@@ -214,20 +341,44 @@ export async function pickPinaxOptions(opts: {
       };
     }
 
-    const isExpiryDay = atmCe.expiry === sessionDate;
-    const keys = [atmCe.instrumentKey, atmPe.instrumentKey];
+    const contracts = resolved.rows || [];
+    // Fetch quotes for ALL contracts in the resolved expiry so the
+    // `premium > 50` scan can find the first valid strike.
+    const quoteKeys = [
+      ...new Set(
+        contracts
+          .map((row) => String(row.instrument_key || '').trim())
+          .filter(Boolean)
+      ),
+    ];
     const [quotes, greeks] = await Promise.all([
-      fetchUpstoxQuotes(opts.accessToken, keys),
-      fetchUpstoxOptionGreeks(opts.accessToken, keys).catch(() => [] as UpstoxOptionGreeks[]),
+      fetchUpstoxQuotes(opts.accessToken, quoteKeys),
+      fetchUpstoxOptionGreeks(opts.accessToken, quoteKeys).catch(() => [] as UpstoxOptionGreeks[]),
     ]);
 
+    const cePick = chooseContractNearPremiumFloor({
+      rows: contracts,
+      side: 'CE',
+      spot: opts.spot,
+      expiry: resolved.expiry,
+      sessionDate,
+      quotes,
+      greeks,
+    });
+    const pePick = chooseContractNearPremiumFloor({
+      rows: contracts,
+      side: 'PE',
+      spot: opts.spot,
+      expiry: resolved.expiry,
+      sessionDate,
+      quotes,
+      greeks,
+    });
+
     const candidates: PinaxOptionCandidate[] = [];
-    for (const contract of [atmCe, atmPe]) {
-      const premium = resolveOptionPremium(contract, quotes, greeks);
-      if (!premium || premium <= 0) continue;
-      // Expiry-day offset strikes are intentional (not classic ATM).
-      const isAtm = !isExpiryDay;
-      candidates.push(toCandidate(contract, premium, isAtm));
+    for (const row of [cePick, pePick]) {
+      if (!row.contract || !row.premium || row.premium <= 0) continue;
+      candidates.push(toCandidate(row.contract, row.premium, row.isAtm));
     }
 
     if (!candidates.length) {

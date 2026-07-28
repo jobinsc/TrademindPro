@@ -71,9 +71,9 @@ def safe(s: object) -> str:
 
 def reason_word(r: str | None) -> str:
     if r == "UT_5M":
-        return "Sector 7 A (5m UT against us)"
+        return "Sector 7 A"
     if r == "UT_3M":
-        return "3m UT flipped"
+        return "Sector 7 A (3m)"
     if r == "TRAIL":
         return "profit trail"
     if r == "SL":
@@ -107,16 +107,24 @@ def net_trade(t: dict) -> float:
 
 
 def load_day_trades(date: str) -> list[dict]:
+    by_id: dict[str, dict] = {}
     p = ARCHIVE / f"{date}.json"
     if p.exists():
         data = json.loads(p.read_text(encoding="utf-8"))
-        return data.get("trades") or []
+        for t in data.get("trades") or []:
+            if t.get("status") == "closed" and t.get("id"):
+                by_id[str(t["id"])] = t
     sess = DATA / f"nexus-pulse-session-{date}.json"
     if sess.exists():
         s = json.loads(sess.read_text(encoding="utf-8"))
-        closed = s.get("closedTrades") or []
-        return [{**t, "sessionDate": date} for t in closed if t.get("status") == "closed"]
-    return []
+        for t in s.get("closedTrades") or []:
+            if t.get("status") == "closed" and t.get("id"):
+                by_id[str(t["id"])] = {**t, "sessionDate": date}
+        for t in s.get("openTrades") or []:
+            if t.get("status") == "open" and t.get("id"):
+                row = {**t, "sessionDate": date, "reportOpen": True}
+                by_id[str(t["id"])] = row
+    return list(by_id.values())
 
 
 def load_session(date: str) -> dict | None:

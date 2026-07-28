@@ -108,6 +108,16 @@ export async function listTradeDatesFromCloud(mode: NexusTradeMode): Promise<str
   return idx[mode] || [];
 }
 
+/** Remove daily PDF (+ meta) from Supabase Storage. */
+export async function deleteDailyPdfFromCloud(date: string): Promise<{ ok: boolean; error?: string }> {
+  const sb = getSupabaseAdmin();
+  if (!sb) return { ok: false, error: 'Supabase not configured' };
+  const paths = [dailyPdfStoragePath(date), dailyMetaStoragePath(date)];
+  const { error } = await sb.storage.from(NEXUS_STORAGE_BUCKET).remove(paths);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
 /** Upload daily PDF bytes to Supabase Storage. */
 export async function uploadDailyPdfToCloud(date: string): Promise<{ ok: boolean; error?: string }> {
   const sb = getSupabaseAdmin();

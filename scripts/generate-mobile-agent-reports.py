@@ -252,7 +252,7 @@ def build_nexus(date: str) -> Path:
     pdf.section("1. What this agent is")
     pdf.para(
         "NexusPulse is a SEPARATE Nifty options paper agent. "
-        "It uses UT Bot on 3m for entries and 5m as direction filter, "
+        "It uses Sector 7 A on 3m for entries and 5m as direction filter, "
         "with two lanes (current_bans + morning_open_stop_15)."
     )
     pdf.para(
@@ -430,7 +430,7 @@ def build_pinax(date: str) -> Path:
     pdf.section("1. What this agent is")
     pdf.para(
         "PinaxForge is a SEPARATE selective paper desk: study S/R + bias, take high-quality "
-        "option setups, mandatory SL, RR targets, adverse/time exits. Not UT Bot."
+        "option setups, mandatory SL, RR targets, adverse/time exits. Not Sector 7 A."
     )
     pdf.para(
         f"Report cost model: Rs {BROKERAGE_PER_LOT:.0f} per 1-lot round trip for THIS PDF."
@@ -633,7 +633,7 @@ def build_improvement(date: str) -> Path:
     pdf.section("Why not merge engines")
     pdf.bullet("ATM Lab = watch / record ATM tape (no fills).")
     pdf.bullet("PinaxForge = human-style analysis desk: S/R, bias, selective setup, SL + RR.")
-    pdf.bullet("NexusPulse = systematic UT Bot dual-lane timing.")
+    pdf.bullet("NexusPulse = systematic Sector 7 A dual-lane timing.")
     pdf.bullet("Merging signals causes overtrading, conflicting exits, and Upstox 429 storms.")
     pdf.bullet("Pros run multiple playbooks on one book — they do not mash indicators into one noisy trigger.")
 

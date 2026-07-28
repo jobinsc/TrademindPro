@@ -7,7 +7,7 @@ import {
 import type { NexusSignalDecision, NexusUtSnapshot } from '@/lib/nexus-pulse/types';
 
 /**
- * V2 entry: new 3m UT buy/sell on bar edge + 5m pos agrees.
+ * Sector 7 A entry: new 3m buy/sell on bar edge + 5m pos agrees.
  * buy3 & pos5==1 → CE; sell3 & pos5==-1 → PE.
  */
 export function evaluateUtV2Entry(opts: {
@@ -38,18 +38,18 @@ export function evaluateUtV2Entry(opts: {
 
   const at = opts.now?.toISOString() ?? new Date().toISOString();
   let side: 'CE' | 'PE' | 'FLAT' = 'FLAT';
-  let reason = 'No aligned UT entry';
+  let reason = 'No aligned Sector 7 A entry';
 
   if (new3mEdge && buy3m && pos5m === 1) {
     side = 'CE';
-    reason = '3m UT Buy + 5m pos long → long CE';
+    reason = 'Sector 7 A: 3m Buy + 5m long → long CE';
   } else if (new3mEdge && sell3m && pos5m === -1) {
     side = 'PE';
-    reason = '3m UT Sell + 5m pos short → long PE';
+    reason = 'Sector 7 A: 3m Sell + 5m short → long PE';
   } else if (buy3m && pos5m !== 1) {
-    reason = '3m buy but 5m not aligned long';
+    reason = 'Sector 7 A: 3m buy but 5m not aligned long';
   } else if (sell3m && pos5m !== -1) {
-    reason = '3m sell but 5m not aligned short';
+    reason = 'Sector 7 A: 3m sell but 5m not aligned short';
   }
 
   return {

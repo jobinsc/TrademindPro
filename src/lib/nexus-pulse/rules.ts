@@ -1,11 +1,13 @@
 /**
- * NexusPulse — Nifty UT Bot options paper desk (isolated from PinaxForge / Blink / ATM Lab).
+ * NexusPulse — Nifty Sector 7 A options paper desk (isolated from PinaxForge / Blink / ATM Lab).
  */
 
 export const NEXUS_PULSE_NAME = 'NexusPulse';
-export const NEXUS_PULSE_VERSION = 'ut-v1-scaffold';
+export const NEXUS_PULSE_VERSION = 'sector-7a-v1';
+/** Display name for the signal / 5m flip exit (internal codes still UT_*). */
+export const NEXUS_SECTOR_7A_LABEL = 'Sector 7 A';
 
-/** Pine defaults: Key=1, ATR=10 on 3m; Nexus handoff used ATR=14 on 5m. */
+/** Sector 7 A params: Key=1, ATR=10 on 3m; ATR=14 on 5m. */
 export const NEXUS_UT_3M = { keyValue: 1, atrPeriod: 10 } as const;
 export const NEXUS_UT_5M = { keyValue: 1, atrPeriod: 14 } as const;
 
@@ -14,11 +16,11 @@ export const NEXUS_PULSE_RULES = {
   liveOrdersAllowed: false,
   analyse: 'NIFTY_50' as const,
   trade: 'NIFTY_OPTIONS' as const,
-  /** Long premium only — CE on bullish UT, PE on bearish UT. */
+  /** Long premium only — CE on bullish Sector 7 A, PE on bearish. */
   sideMode: 'buy_premium_only' as const,
   lotSize: 1,
   niftyLotSize: 65,
-  roundTripCostInr: 160,
+  roundTripCostInr: 70,
   sessionOpenIst: '09:15',
   sessionSquareOffIst: '15:14',
   /** Lane B: force flat + no new entries from 15:00. */
@@ -26,7 +28,8 @@ export const NEXUS_PULSE_RULES = {
   /** Trail after option MFE (premium pts) ≥ trigger; exit if giveback > (1 - keepFrac) × MFE. */
   trailMfeTriggerPts: 12,
   trailKeepFrac: 0.5,
-  mandatoryStopLoss: true,
+  /** BOTS NexusPulse study uses trail + UT exits only (no premium SL). */
+  mandatoryStopLoss: false,
   /** Default SL = 20% of entry premium (options), min ₹8 — same desk habit as PinaxForge. */
   defaultSlPct: 0.2,
   minSlPremiumPts: 8,
@@ -55,11 +58,11 @@ export function nexusRuleSummary(): string[] {
   const r = NEXUS_PULSE_RULES;
   return [
     `${NEXUS_PULSE_NAME} — separate agent. Does not modify Blink, ATM Lab, or PinaxForge.`,
-    'Signal: TradingView UT Bot (your Pine) on Nifty 3m entries + 5m direction must agree.',
-    'Trades: buy ATM CE (bull) / buy ATM PE (bear), front-week Nifty options, 1 lot.',
+    `Signal: ${NEXUS_SECTOR_7A_LABEL} on Nifty 3m entries + 5m direction must agree.`,
+    'Trades: buy CE/PE (ATM or ₹50+ stepped strike if ATM cheap), front-week Nifty, 1 lot.',
     `Two paper lanes (A/B) with different session windows — see ${Object.keys(NEXUS_LANES).join(', ')}.`,
     `Trail: MFE ≥ ${r.trailMfeTriggerPts} premium pts → exit if open profit < ${r.trailKeepFrac * 100}% of MFE.`,
-    'Exits: opposite 3m UT flip; 5m UT against position; square-off 15:14 IST.',
+    `Exits: trail + opposite 3m ${NEXUS_SECTOR_7A_LABEL} (new bar) + 5m against; no premium SL; SQ 15:14.`,
     `Cost model ₹${r.roundTripCostInr}/round trip on closed trades.`,
     'Paper only until you explicitly approve live.',
   ];

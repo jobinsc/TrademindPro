@@ -1,0 +1,150 @@
+//@version=6
+indicator("Gold Intrablast Clean", shorttitle="Gold ORB+", overlay=true, max_lines_count=50, max_labels_count=100)
+
+// ═══════════════════════════════════════════════════════════════
+// GOLD INTRADAY METHOD (cleaned from Intrablast mashup)
+// 1) Build Opening Range on a GOLD session (NY or London)
+// 2) Trade FIRST break of ORB high/low only
+// 3) Risk = ATR × multiplier | Target = Risk × R:R
+// 4) Optional: EMA bias filter (trade with trend only)
+// ═══════════════════════════════════════════════════════════════
+
+grpOrb = "1) Opening Range (Gold)"
+useOrb = input.bool(true, "Show / use ORB", group=grpOrb)
+orbSession = input.session("1230-1330", "ORB window (chart TZ)", group=grpOrb,
+     tooltip="Backtest winner: London ORB. IST 1230-1330 ≈ 07:00-08:00 UTC. NY alternative: 1900-2000 IST.")
+tz = input.string("Asia/Kolkata", "Timezone", options=["Asia/Kolkata", "UTC", "America/New_York", "Europe/London"], group=grpOrb)
+showMid = input.bool(true, "Show mid line", group=grpOrb)
+boxBg = input.color(color.new(color.gray, 85), "ORB fill", group=grpOrb)
+
+grpTrade = "2) Entry / Risk"
+tradeBreaks = input.bool(true, "Plot breakout signals", group=grpTrade)
+onlyFirstBreak = input.bool(true, "Only FIRST break of the day", group=grpTrade)
+useEmaFilter = input.bool(true, "EMA bias filter", group=grpTrade)
+emaLen = input.int(50, "EMA length", minval=5, group=grpTrade)
+atrLen = input.int(14, "ATR length", minval=1, group=grpTrade)
+slAtr = input.float(1.5, "Stop = ATR ×", minval=0.5, step=0.1, group=grpTrade)
+rr = input.float(2.5, "Take profit = Risk × R", minval=1.0, step=0.5, group=grpTrade)
+maxSignalsDay = input.int(2, "Max signals / day", minval=1, maxval=5, group=grpTrade)
+
+grpStyle = "3) Style"
+bullCol = input.color(color.new(#12B4A3, 0), "Long", group=grpStyle)
+bearCol = input.color(color.new(#FF1100, 0), "Short", group=grpStyle)
+emaCol = input.color(color.new(color.orange, 0), "EMA", group=grpStyle)
+
+// ── Helpers ──
+inOrb = useOrb and not na(time(timeframe.period, orbSession, tz))
+newOrb = inOrb and not inOrb[1]
+leftOrb = not inOrb and inOrb[1]
+
+var float orbHi = na
+var float orbLo = na
+var int orbStart = na
+var line lnHi = na
+var line lnLo = na
+var line lnMid = na
+var box orbBox = na
+
+var int dayId = na
+var int signalsToday = 0
+var bool brokeUp = false
+var bool brokeDn = false
+var bool orbReady = false
+
+thisDay = year(time, tz) * 10000 + month(time, tz) * 100 + dayofmonth(time, tz)
+if na(dayId) or thisDay != dayId
+    dayId := thisDay
+    signalsToday := 0
+    brokeUp := false
+    brokeDn := false
+    orbReady := false
+    orbHi := na
+    orbLo := na
+
+// Build ORB
+if newOrb
+    orbHi := high
+    orbLo := low
+    orbStart := time
+    orbReady := false
+    line.delete(lnHi)
+    line.delete(lnLo)
+    line.delete(lnMid)
+    box.delete(orbBox)
+
+if inOrb
+    orbHi := math.max(nz(orbHi, high), high)
+    orbLo := math.min(nz(orbLo, low), low)
+    line.delete(lnHi)
+    line.delete(lnLo)
+    line.delete(lnMid)
+    box.delete(orbBox)
+    orbBox := box.new(orbStart, orbHi, time, orbLo, xloc=xloc.bar_time, bgcolor=boxBg, border_color=color.gray, border_width=1)
+    lnHi := line.new(orbStart, orbHi, time, orbHi, xloc=xloc.bar_time, color=color.black, width=2)
+    lnLo := line.new(orbStart, orbLo, time, orbLo, xloc=xloc.bar_time, color=color.black, width=2)
+    if showMid
+        lnMid := line.new(orbStart, (orbHi + orbLo) / 2, time, (orbHi + orbLo) / 2, xloc=xloc.bar_time, color=color.blue, style=line.style_dashed, width=1)
+
+if leftOrb
+    orbReady := not na(orbHi) and not na(orbLo) and orbHi > orbLo
+    // extend lines through the day
+    if not na(lnHi)
+        line.set_extend(lnHi, extend.right)
+    if not na(lnLo)
+        line.set_extend(lnLo, extend.right)
+    if not na(lnMid)
+        line.set_extend(lnMid, extend.right)
+
+ema = ta.ema(close, emaLen)
+plot(useEmaFilter ? ema : na, "EMA bias", color=emaCol, linewidth=2)
+
+atr = ta.atr(atrLen)
+risk = atr * slAtr
+
+// Breakout after ORB complete
+longBreak = orbReady and not inOrb and close > orbHi and close[1] <= orbHi
+shortBreak = orbReady and not inOrb and close < orbLo and close[1] >= orbLo
+
+longOk = longBreak and (not useEmaFilter or close > ema) and signalsToday < maxSignalsDay and (not onlyFirstBreak or not brokeUp)
+shortOk = shortBreak and (not useEmaFilter or close < ema) and signalsToday < maxSignalsDay and (not onlyFirstBreak or not brokeDn)
+
+if longOk
+    brokeUp := true
+    signalsToday += 1
+if shortOk
+    brokeDn := true
+    signalsToday += 1
+
+plotshape(tradeBreaks and longOk, "Gold Long", shape.triangleup, location.belowbar, bullCol, size=size.small, text="L")
+plotshape(tradeBreaks and shortOk, "Gold Short", shape.triangledown, location.abovebar, bearCol, size=size.small, text="S")
+
+// Suggested SL / TP lines on signal bar (visual guide)
+var line slL = na
+var line tpL = na
+if longOk and risk > 0
+    line.delete(slL)
+    line.delete(tpL)
+    slL := line.new(bar_index, close - risk, bar_index + 8, close - risk, color=bearCol, style=line.style_dotted, width=1)
+    tpL := line.new(bar_index, close + risk * rr, bar_index + 8, close + risk * rr, color=bullCol, style=line.style_dotted, width=1)
+if shortOk and risk > 0
+    line.delete(slL)
+    line.delete(tpL)
+    slL := line.new(bar_index, close + risk, bar_index + 8, close + risk, color=bearCol, style=line.style_dotted, width=1)
+    tpL := line.new(bar_index, close - risk * rr, bar_index + 8, close - risk * rr, color=bullCol, style=line.style_dotted, width=1)
+
+alertcondition(longOk, "Gold ORB Long", "Gold ORB+ LONG breakout")
+alertcondition(shortOk, "Gold ORB Short", "Gold ORB+ SHORT breakout")
+
+// Info table
+var table info = table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 80), border_width=1)
+if barstate.islast
+    table.cell(info, 0, 0, "Gold ORB+", text_color=color.white, text_size=size.small)
+    table.cell(info, 1, 0, orbReady ? "READY" : inOrb ? "BUILDING" : "WAIT", text_color=orbReady ? color.lime : color.gray, text_size=size.small)
+    table.cell(info, 0, 1, "ORB Hi", text_color=color.gray, text_size=size.tiny)
+    table.cell(info, 1, 1, str.tostring(orbHi, format.mintick), text_color=color.white, text_size=size.tiny)
+    table.cell(info, 0, 2, "ORB Lo", text_color=color.gray, text_size=size.tiny)
+    table.cell(info, 1, 2, str.tostring(orbLo, format.mintick), text_color=color.white, text_size=size.tiny)
+    table.cell(info, 0, 3, "Risk (ATR)", text_color=color.gray, text_size=size.tiny)
+    table.cell(info, 1, 3, str.tostring(risk, "#.##") + " | RR " + str.tostring(rr), text_color=color.white, text_size=size.tiny)
+    table.cell(info, 0, 4, "Signals today", text_color=color.gray, text_size=size.tiny)
+    table.cell(info, 1, 4, str.tostring(signalsToday) + "/" + str.tostring(maxSignalsDay), text_color=color.white, text_size=size.tiny)

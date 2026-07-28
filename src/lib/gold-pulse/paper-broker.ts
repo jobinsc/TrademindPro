@@ -1,5 +1,8 @@
-import { GOLD_PULSE_RULES } from '@/lib/gold-pulse/rules';
+import { GOLD_PAPER_POINT_VALUE, GOLD_PAPER_QTY } from '@/lib/gold-pulse/backtest-params';
+import type { GoldBacktestParams } from '@/lib/gold-pulse/backtest-params';
 import type { GoldExitReason, GoldPaperTrade, GoldSide } from '@/lib/gold-pulse/types';
+import type { GoldStrategyId } from '@/lib/gold-pulse/strategies';
+import { goldStrategyParams } from '@/lib/gold-pulse/strategies';
 
 function uid(): string {
   return `gp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -13,8 +16,10 @@ export function openGoldPaperTrade(opts: {
   side: GoldSide;
   price: number;
   symbol: string;
+  strategyId: GoldStrategyId;
+  params: GoldBacktestParams;
 }): GoldPaperTrade {
-  const { defaultSlPct, minSlUsd, qty } = GOLD_PULSE_RULES;
+  const { defaultSlPct, minSlUsd } = opts.params;
   const slDist = Math.max(opts.price * defaultSlPct, minSlUsd);
   const stopLoss =
     opts.side === 'LONG' ? opts.price - slDist : opts.price + slDist;
@@ -25,7 +30,7 @@ export function openGoldPaperTrade(opts: {
     status: 'open',
     side: opts.side,
     symbol: opts.symbol,
-    qty,
+    qty: GOLD_PAPER_QTY,
     entryPrice: opts.price,
     stopLoss,
     markPrice: opts.price,
@@ -33,17 +38,19 @@ export function openGoldPaperTrade(opts: {
     lowPrice: opts.price,
     maxFavorableUsd: 0,
     maxAdverseUsd: 0,
+    strategyId: opts.strategyId,
   };
 }
 
 export function closeGoldTrade(
   t: GoldPaperTrade,
   exitPrice: number,
-  reason: GoldExitReason
+  reason: GoldExitReason,
+  params: GoldBacktestParams
 ): GoldPaperTrade {
   const move = signedMove(t.side, t.entryPrice, exitPrice);
-  const gross = move * t.qty * GOLD_PULSE_RULES.pointValue;
-  const net = gross - GOLD_PULSE_RULES.roundTripCostUsd;
+  const gross = move * t.qty * GOLD_PAPER_POINT_VALUE;
+  const net = gross - params.roundTripCostUsd;
   return {
     ...t,
     status: 'closed',
@@ -62,12 +69,19 @@ export function updateOpenGoldTrades(
   opts: {
     entryPos: -1 | 0 | 1;
     htfPos: -1 | 0 | 1;
+    params: GoldBacktestParams;
   }
 ): { open: GoldPaperTrade[]; closed: GoldPaperTrade[] } {
   const still: GoldPaperTrade[] = [];
   const closed: GoldPaperTrade[] = [];
-  const { trailMfeTrigger, trailKeepFrac, useTrail, disableEntryFlipExit, entryFlipNeedsHtfAgainst } =
-    GOLD_PULSE_RULES;
+  const {
+    trailMfeTrigger,
+    trailKeepFrac,
+    useTrail,
+    useStopLoss,
+    disableEntryFlipExit,
+    entryFlipNeedsHtfAgainst,
+  } = opts.params;
 
   for (const t of open) {
     const high = Math.max(t.highPrice, spot);
@@ -84,22 +98,25 @@ export function updateOpenGoldTrades(
       maxAdverseUsd: Math.round(mae * 100) / 100,
     };
 
-    if (marked.side === 'LONG' && spot <= marked.stopLoss) {
-      closed.push(closeGoldTrade(marked, spot, 'SL'));
+    const tradeParams = t.strategyId
+      ? goldStrategyParams(t.strategyId)
+      : opts.params;
+
+    if (useStopLoss && marked.side === 'LONG' && spot <= marked.stopLoss) {
+      closed.push(closeGoldTrade(marked, spot, 'SL', tradeParams));
       continue;
     }
-    if (marked.side === 'SHORT' && spot >= marked.stopLoss) {
-      closed.push(closeGoldTrade(marked, spot, 'SL'));
+    if (useStopLoss && marked.side === 'SHORT' && spot >= marked.stopLoss) {
+      closed.push(closeGoldTrade(marked, spot, 'SL', tradeParams));
       continue;
     }
 
-    // Sector 7 G — primary exit
     if (marked.side === 'LONG' && opts.htfPos === -1) {
-      closed.push(closeGoldTrade(marked, spot, 'UT_HTF'));
+      closed.push(closeGoldTrade(marked, spot, 'UT_HTF', tradeParams));
       continue;
     }
     if (marked.side === 'SHORT' && opts.htfPos === 1) {
-      closed.push(closeGoldTrade(marked, spot, 'UT_HTF'));
+      closed.push(closeGoldTrade(marked, spot, 'UT_HTF', tradeParams));
       continue;
     }
 
@@ -115,12 +132,12 @@ export function updateOpenGoldTrades(
       entryAgainst &&
       (!entryFlipNeedsHtfAgainst || htfAgainst)
     ) {
-      closed.push(closeGoldTrade(marked, spot, 'UT_ENTRY'));
+      closed.push(closeGoldTrade(marked, spot, 'UT_ENTRY', tradeParams));
       continue;
     }
 
     if (useTrail && mfe >= trailMfeTrigger && move < trailKeepFrac * mfe) {
-      closed.push(closeGoldTrade(marked, spot, 'TRAIL'));
+      closed.push(closeGoldTrade(marked, spot, 'TRAIL', tradeParams));
       continue;
     }
 

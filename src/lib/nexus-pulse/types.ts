@@ -57,14 +57,51 @@ export type NexusPaperTrade = {
   netPnl?: number;
 };
 
+export type NexusAtmLegQuote = {
+  instrumentKey: string;
+  tradingSymbol: string;
+  strike: number;
+  expiry?: string;
+  ltp: number;
+  bid?: number | null;
+  ask?: number | null;
+};
+
+/** Live board like ATM Lab — Nifty + ATM CE/PE premiums. */
+export type NexusAtmBoard = {
+  spot: number;
+  atmStrike: number;
+  expiry: string | null;
+  ce: NexusAtmLegQuote | null;
+  pe: NexusAtmLegQuote | null;
+  quotedAt: string;
+  note?: string;
+};
+
+export type NexusPulseSettings = {
+  activeLanes: NexusLaneId[];
+  stopAfterLossEnabled: boolean;
+  stopAfterLossInr: number;
+};
+
+export type NexusGuardState = {
+  blockedNewEntries: boolean;
+  reason: string | null;
+  dayNetAtDecision: number;
+};
+
 export type NexusPulseSession = {
   sessionDate: string;
   startedAt: string;
   updatedAt: string;
   spot: number;
+  /** Live Nifty + ATM CE/PE quotes (ATM Lab style). */
+  board: NexusAtmBoard | null;
   ut3m: NexusUtSnapshot | null;
   ut5m: NexusUtSnapshot | null;
   lastSignal: NexusSignalDecision | null;
+  settings: NexusPulseSettings;
+  guard: NexusGuardState;
   openTrades: NexusPaperTrade[];
   closedTrades: NexusPaperTrade[];
   autoPaused: boolean;

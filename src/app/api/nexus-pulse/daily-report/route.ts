@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readSessionCookie, verifySessionToken } from '@/lib/session';
 import { istDate } from '@/lib/pinax-forge/ist';
+import type { NexusLaneId } from '@/lib/nexus-pulse/rules';
 import {
   generateNexusDailyReport,
   listDailyReports,
   loadDailyReportMeta,
+  removeDailyReport,
   syncDailyReportsToDatabase,
   loadDailyIndex,
 } from '@/lib/nexus-pulse/daily-report-store';
+import { ensureNexusDailyReportPdf } from '@/lib/nexus-pulse/daily-report-pdf';
 import {
   ensureNexusStorageBucket,
   readDailyPdfBytes,
@@ -17,6 +20,7 @@ import {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
 
 function requireAdmin(req: NextRequest) {
   const user = verifySessionToken(readSessionCookie(req));
@@ -51,7 +55,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'Invalid date' }, { status: 400 });
     }
     try {
-      const buf = await readDailyPdfBytes(date);
+      let buf = await readDailyPdfBytes(date);
+      if (!buf) {
+        buf = await ensureNexusDailyReportPdf(date);
+      }
       if (!buf) throw new Error('missing');
       const disposition =
         url.searchParams.get('attach') === '1'
@@ -85,7 +92,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'Admin only' }, { status: 403 });
   }
 
-  let body: { action?: string; date?: string };
+  let body: { action?: string; date?: string; activeLanes?: NexusLaneId[]; source?: string };
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -118,12 +125,33 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: full.ok, cloud: full });
   }
 
+  if (action === 'remove' || action === 'delete') {
+    const result = await removeDailyReport(date);
+    if (!result.ok) {
+      return NextResponse.json({ ok: false, error: result.error }, { status: 400 });
+    }
+    return NextResponse.json({ ok: true, removed: date });
+  }
+
   if (action === 'generate') {
-    const result = await generateNexusDailyReport(date);
+    const upstoxToken = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '')?.trim();
+    const activeLanes = Array.isArray(body.activeLanes)
+      ? body.activeLanes.filter(
+          (x): x is NexusLaneId => x === 'current_bans' || x === 'morning_open_stop_15'
+        )
+      : undefined;
+    const result = await generateNexusDailyReport(
+      date,
+      upstoxToken || undefined,
+      activeLanes?.length ? activeLanes : undefined
+    );
     if (!result.ok) {
       return NextResponse.json({ ok: false, error: result.error }, { status: 500 });
     }
     await uploadDailyPdfToCloud(date).catch(() => undefined);
+    await syncDailyReportsToDatabase(
+      (await loadDailyIndex()).reports
+    ).catch(() => undefined);
     return NextResponse.json({
       ok: true,
       meta: result.meta,

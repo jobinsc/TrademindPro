@@ -142,7 +142,7 @@ const navGroups: NavGroup[] = [
       },
       {
         href: '/app/nexus-pulse',
-        label: 'NexusPulse (UT)',
+        label: 'NexusPulse (Sector 7 A)',
         icon: Radio,
         exact: true,
         children: [

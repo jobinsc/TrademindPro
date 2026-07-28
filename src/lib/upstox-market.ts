@@ -111,12 +111,14 @@ function sleep(ms: number) {
 /** Fetch full market quotes — max 500 keys per Upstox call; soft cache + 429 backoff. */
 export async function fetchUpstoxQuotes(
   accessToken: string,
-  instrumentKeys: string[]
+  instrumentKeys: string[],
+  opts?: { maxCacheAgeMs?: number }
 ): Promise<UpstoxQuote[]> {
   const token = accessToken.trim();
   if (!token) throw new Error('Missing Upstox access token');
   if (!instrumentKeys.length) return [];
 
+  const cacheTtl = opts?.maxCacheAgeMs ?? QUOTE_CACHE_TTL_MS;
   const now = Date.now();
   const unique = [...new Set(instrumentKeys.map(quoteCacheKey).filter(Boolean))];
   const results: UpstoxQuote[] = [];
@@ -124,7 +126,7 @@ export async function fetchUpstoxQuotes(
 
   for (const key of unique) {
     const hit = quoteCache.get(key);
-    if (hit && now - hit.at < QUOTE_CACHE_TTL_MS) {
+    if (hit && now - hit.at < cacheTtl) {
       results.push(hit.quote);
     } else {
       missing.push(key);
@@ -140,7 +142,7 @@ export async function fetchUpstoxQuotes(
     const stillMissing: string[] = [];
     for (const key of unique) {
       const hit = quoteCache.get(key);
-      if (hit && now2 - hit.at < QUOTE_CACHE_TTL_MS) {
+      if (hit && now2 - hit.at < cacheTtl) {
         results.push(hit.quote);
       } else {
         stillMissing.push(key);

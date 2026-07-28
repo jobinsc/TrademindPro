@@ -2,8 +2,18 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Download, Eye, FileText, Loader2, RefreshCw, X } from 'lucide-react';
+import { Download, Eye, FileText, Loader2, RefreshCw, Trash2, X } from 'lucide-react';
+import { getUpstoxAccessToken } from '@/lib/upstox-client';
 import RequireAdmin from '@/components/auth/RequireAdmin';
+import type { NexusLaneId } from '@/lib/nexus-pulse/rules';
+import { NEXUS_LANES } from '@/lib/nexus-pulse/rules';
+
+type LaneSelectionMode = 'morning_open_stop_15' | 'current_bans' | 'both';
+
+function activeLanesFromMode(mode: LaneSelectionMode): NexusLaneId[] {
+  if (mode === 'both') return ['current_bans', 'morning_open_stop_15'];
+  return [mode];
+}
 
 type ReportSections = {
   opening?: string[];
@@ -12,6 +22,7 @@ type ReportSections = {
   tradeBlocks?: string[][];
   deskSummary?: string[];
   suggestions?: string[];
+  studyByLane?: string[];
 };
 
 type ReportRow = {
@@ -29,6 +40,8 @@ type ReportRow = {
   };
   simpleStory?: string[];
   sections?: ReportSections;
+  reportSource?: 'real_option_replay' | 'paper_desk';
+  premiumModel?: string;
 };
 
 function SectionBlock({ title, lines }: { title: string; lines?: string[] }) {
@@ -65,6 +78,7 @@ function NexusDailyReportsInner() {
     }
   });
   const [viewer, setViewer] = useState<ReportRow | null>(null);
+  const [laneMode, setLaneMode] = useState<LaneSelectionMode>('morning_open_stop_15');
 
   const load = useCallback(async () => {
     setError('');
@@ -80,17 +94,43 @@ function NexusDailyReportsInner() {
 
   async function generate(forDate?: string) {
     const d = forDate || date;
-    setBusy(`Writing detailed report for ${d}…`);
+    setBusy(`Real option replay for ${d} (may take 1–2 min)…`);
     setError('');
+    const upstox = getUpstoxAccessToken();
+    if (!upstox) {
+      setBusy('Creating paper-desk report (connect Upstox for study replay)…');
+    }
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (upstox) headers.Authorization = `Bearer ${upstox}`;
       const res = await fetch('/api/nexus-pulse/daily-report', {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'generate', date: d }),
+        headers,
+        body: JSON.stringify({
+          action: 'generate',
+          date: d,
+          activeLanes: activeLanesFromMode(laneMode),
+        }),
       });
-      const data = (await res.json()) as { ok?: boolean; error?: string };
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        meta?: ReportRow & { sections?: ReportSections };
+      };
       if (!res.ok || !data.ok) throw new Error(data.error || 'Generate failed');
+      if (data.meta) {
+        setViewer({
+          date: data.meta.date,
+          title: data.meta.title,
+          generatedAt: data.meta.generatedAt,
+          summary: data.meta.summary,
+          sections: data.meta.sections,
+          simpleStory: data.meta.simpleStory,
+          reportSource: data.meta.reportSource,
+          premiumModel: data.meta.premiumModel,
+        });
+      }
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Generate failed');
@@ -143,6 +183,33 @@ function NexusDailyReportsInner() {
     }
   }
 
+  async function removeReport(d: string) {
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm(`Remove daily report and PDF for ${d}? This cannot be undone.`)
+    ) {
+      return;
+    }
+    setBusy(`Removing ${d}…`);
+    setError('');
+    try {
+      const res = await fetch('/api/nexus-pulse/daily-report', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'remove', date: d }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Remove failed');
+      if (viewer?.date === d) setViewer(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Remove failed');
+    } finally {
+      setBusy('');
+    }
+  }
+
   async function downloadPdf(d: string) {
     setBusy('Preparing PDF…');
     setError('');
@@ -153,7 +220,10 @@ function NexusDailyReportsInner() {
       );
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(data.error || 'PDF not found — tap Create PDF first, then Sync to cloud');
+        throw new Error(
+          data.error ||
+            'PDF not ready — tap Create report first, or use View for the full text on mobile.'
+        );
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -182,9 +252,8 @@ function NexusDailyReportsInner() {
           </p>
           <h1 className="font-display text-2xl font-bold text-sky-deep">Daily Reports</h1>
           <p className="mt-1 text-[13px] text-sky-ink/60">
-            Phone-friendly day review: market behaviour, trade detail, full P&amp;L math, desk
-            summary, and improvement notes. Tap <strong>View</strong> on mobile (PDF download is
-            optional).
+            Phone-friendly day review: market behaviour, trade detail, P&L math, and suggestions.{' '}
+            <strong>View</strong> works without PDF. PDF is built on the server (no Python required).
           </p>
         </div>
         <Link
@@ -193,6 +262,37 @@ function NexusDailyReportsInner() {
         >
           Back to NexusPulse
         </Link>
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-sky-100 bg-sky-50/40 p-3">
+        <p className="text-[11px] font-bold uppercase tracking-wide text-sky-ink/45">Lanes (replay)</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {(
+            [
+              ['morning_open_stop_15', NEXUS_LANES.morning_open_stop_15.title],
+              ['current_bans', NEXUS_LANES.current_bans.title],
+              ['both', 'Both lanes'],
+            ] as const
+          ).map(([id, label]) => (
+            <label
+              key={id}
+              className={`cursor-pointer rounded-xl border px-3 py-2 text-[12px] font-semibold ${
+                laneMode === id
+                  ? 'border-sky-deep bg-white text-sky-deep'
+                  : 'border-sky-100 bg-white/80 text-sky-ink/70'
+              }`}
+            >
+              <input
+                type="radio"
+                name="dr-lane"
+                className="sr-only"
+                checked={laneMode === id}
+                onChange={() => setLaneMode(id)}
+              />
+              {label}
+            </label>
+          ))}
+        </div>
       </div>
 
       <div className="mt-5 flex flex-wrap items-center gap-2">
@@ -246,6 +346,9 @@ function NexusDailyReportsInner() {
                     {r.summary.tradeCount} trades · W {r.summary.wins} / L {r.summary.losses}
                     {r.summary.winRate != null ? ` (${r.summary.winRate}%)` : ''} · Net ~₹
                     {r.summary.netAfter70.toFixed(0)}
+                    {(r as ReportRow).reportSource === 'real_option_replay' ? (
+                      <span className="ml-1 text-violet-700"> · Study replay</span>
+                    ) : null}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -266,6 +369,15 @@ function NexusDailyReportsInner() {
                   >
                     <Download className="h-3.5 w-3.5" />
                     PDF
+                  </button>
+                  <button
+                    type="button"
+                    disabled={Boolean(busy)}
+                    onClick={() => void removeReport(r.date)}
+                    className="inline-flex min-h-[36px] items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-[11px] font-bold text-rose-700 disabled:opacity-50"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Remove
                   </button>
                 </div>
               </div>
@@ -305,6 +417,15 @@ function NexusDailyReportsInner() {
               </button>
               <button
                 type="button"
+                disabled={Boolean(busy)}
+                onClick={() => void removeReport(viewer.date)}
+                className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-semibold text-rose-700 disabled:opacity-50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Remove
+              </button>
+              <button
+                type="button"
                 aria-label="Close"
                 onClick={() => setViewer(null)}
                 className="rounded-lg bg-sky-deep p-2 text-white"
@@ -315,6 +436,10 @@ function NexusDailyReportsInner() {
           </div>
           <div className="flex-1 overflow-y-auto px-4 py-4">
             <p className="text-[12px] text-sky-ink/55">
+              {viewer.reportSource === 'real_option_replay' ? (
+                <span className="font-semibold text-violet-800">Real Option Study replay · </span>
+              ) : null}
+              {viewer.premiumModel ? `${viewer.premiumModel}. ` : ''}
               {viewer.summary.tradeCount} trades · W {viewer.summary.wins} / L{' '}
               {viewer.summary.losses}
               {viewer.summary.gross != null ? ` · Gross ₹${viewer.summary.gross.toFixed(0)}` : ''}
@@ -325,6 +450,9 @@ function NexusDailyReportsInner() {
             </p>
             <SectionBlock title="1. What happened" lines={viewer.sections?.opening} />
             <SectionBlock title="2. Market behaviour" lines={viewer.sections?.market} />
+            {viewer.sections?.studyByLane?.length ? (
+              <SectionBlock title="Study by lane (backtest match)" lines={viewer.sections.studyByLane} />
+            ) : null}
             <SectionBlock title="3. Overall calculation" lines={viewer.sections?.calc} />
             {viewer.sections?.tradeBlocks?.length ? (
               <div className="mt-4">

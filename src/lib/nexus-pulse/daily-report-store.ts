@@ -5,6 +5,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { spawnSync } from 'child_process';
+import type { NexusLaneId } from '@/lib/nexus-pulse/rules';
 import { readNexusAdminKv, upsertNexusAdminKv } from '@/lib/nexus-pulse/nexus-admin-kv';
 import {
   KV,
@@ -46,7 +47,24 @@ export type NexusDailyReportMeta = {
     tradeBlocks?: string[][];
     deskSummary?: string[];
     suggestions?: string[];
+    studyByLane?: string[];
   };
+  /** Same engine as Real Option Study on NexusPulse main page. */
+  reportSource?: 'real_option_replay' | 'paper_desk';
+  premiumModel?: string;
+  studyByLane?: Partial<
+    Record<
+      NexusLaneId,
+      {
+        totalTrades: number;
+        wins: number;
+        losses: number;
+        winRate: number;
+        grossPnl: number;
+        netPnl: number;
+      }
+    >
+  >;
 };
 
 export type NexusDailyIndex = {
@@ -124,6 +142,36 @@ export async function upsertDailyReportMeta(meta: NexusDailyReportMeta): Promise
   await uploadDailyPdfToCloud(meta.date).catch(() => undefined);
 }
 
+/** Delete local PDF/meta + index row + cloud PDF for one date. */
+export async function removeDailyReport(date: string): Promise<{ ok: boolean; error?: string }> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return { ok: false, error: 'Invalid date' };
+  }
+  await fs.mkdir(DAILY_DIR, { recursive: true });
+  const candidates = [
+    dailyPdfPath(date),
+    dailyMetaPath(date),
+    path.join(DAILY_DIR, `NexusPulse-Day-${date}-updated.pdf`),
+  ];
+  for (const p of candidates) {
+    try {
+      await fs.unlink(p);
+    } catch {
+      /* missing is fine */
+    }
+  }
+
+  const index = await loadDailyIndex();
+  const reports = index.reports.filter((r) => r.date !== date);
+  await saveDailyIndex({ updatedAt: new Date().toISOString(), reports });
+  await syncDailyReportsToDatabase(reports).catch(() => undefined);
+
+  const { deleteDailyPdfFromCloud } = await import('@/lib/nexus-pulse/nexus-cloud-store');
+  await deleteDailyPdfFromCloud(date).catch(() => undefined);
+
+  return { ok: true };
+}
+
 /** Run Python generator for one IST calendar date. */
 export function generateNexusDailyReportSync(date: string): {
   ok: boolean;
@@ -156,16 +204,17 @@ export function generateNexusDailyReportSync(date: string): {
   }
 }
 
-export async function generateNexusDailyReport(date: string): Promise<{
+export async function generateNexusDailyReport(
+  date: string,
+  accessToken?: string,
+  activeLanes?: NexusLaneId[]
+): Promise<{
   ok: boolean;
   meta?: NexusDailyReportMeta;
   error?: string;
 }> {
-  const result = generateNexusDailyReportSync(date);
-  if (result.ok && result.meta) {
-    await upsertDailyReportMeta(result.meta);
-  }
-  return result;
+  const { generateNexusDailyReportNode } = await import('@/lib/nexus-pulse/daily-report-generate');
+  return generateNexusDailyReportNode({ date, accessToken, activeLanes });
 }
 
 /** Mirror date-wise report list to Supabase user_kv (admin desk database). */

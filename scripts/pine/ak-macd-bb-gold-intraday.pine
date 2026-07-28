@@ -1,0 +1,63 @@
+//@version=5
+indicator("AK MACD BB Gold Intraday+", shorttitle="MACD BB Gold+", overlay=true, max_labels_count=200)
+
+// ── Core MACD / BB (same idea as Algokid, cleaned for gold) ──
+bbLen     = input.int(10, "BB Periods", minval=1)
+bbDev     = input.float(1.0, "BB Deviations", minval=0.1, step=0.1)
+fastLen   = input.int(12, "MACD Fast", minval=1)
+slowLen   = input.int(26, "MACD Slow", minval=1)
+sigLen    = input.int(9, "MACD Signal (unused in classic AK)", minval=1)
+
+// ── Gold intraday guards ──
+useHtfFilter = input.bool(true, "Use HTF direction filter")
+htfTf        = input.timeframe("15", "HTF timeframe")
+onlyFirstBar = input.bool(true, "Signal only on FIRST break (recommended)")
+useSession   = input.bool(true, "Limit to session")
+sess         = input.session("1300-1800", "Session (exchange time — set chart TZ wisely)")
+minAtrMult   = input.float(0.15, "Min bar range vs ATR (chop filter)", minval=0.0, step=0.05)
+atrLen       = input.int(14, "ATR length", minval=1)
+showBarPaint = input.bool(true, "Paint bars yellow/aqua while outside")
+showMarkers  = input.bool(true, "Show entry markers")
+
+// ── MACD + BB on MACD ──
+macd = ta.ema(close, fastLen) - ta.ema(close, slowLen)
+basis = ta.sma(macd, bbLen)
+dev = ta.stdev(macd, bbLen) * bbDev
+upper = basis + dev
+lower = basis - dev
+
+above = macd > upper
+below = macd < lower
+firstLong  = above and not above[1]
+firstShort = below and not below[1]
+
+// HTF: EMA slope / position as simple direction
+htfClose = request.security(syminfo.tickerid, htfTf, close, barmerge.gaps_off, barmerge.lookahead_off)
+htfEma   = request.security(syminfo.tickerid, htfTf, ta.ema(close, 21), barmerge.gaps_off, barmerge.lookahead_off)
+htfBull  = htfClose >= htfEma
+htfBear  = htfClose <= htfEma
+
+inSess = not useSession or not na(time(timeframe.period, sess))
+atr = ta.atr(atrLen)
+rangeOk = minAtrMult <= 0 or (high - low) >= atr * minAtrMult
+
+longSetup  = (onlyFirstBar ? firstLong : above) and (not useHtfFilter or htfBull) and inSess and rangeOk
+shortSetup = (onlyFirstBar ? firstShort : below) and (not useHtfFilter or htfBear) and inSess and rangeOk
+
+// Bar paint (classic look, but optional)
+barcolor(showBarPaint and above ? color.yellow : showBarPaint and below ? color.aqua : na)
+
+// Markers = actionable (first break + filters)
+plotshape(showMarkers and longSetup,  title="Long",  style=shape.triangleup,   location=location.belowbar, color=color.yellow, size=size.small, text="L")
+plotshape(showMarkers and shortSetup, title="Short", style=shape.triangledown, location=location.abovebar, color=color.aqua,   size=size.small, text="S")
+
+// Background flash on signal only
+bgcolor(longSetup ? color.new(color.yellow, 85) : shortSetup ? color.new(color.aqua, 85) : na)
+
+// Alerts
+alertcondition(longSetup,  title="Gold MACD BB Long",  message="MACD BB Gold+ LONG")
+alertcondition(shortSetup, title="Gold MACD BB Short", message="MACD BB Gold+ SHORT")
+
+// Optional: show MACD state in data window
+plotchar(above, "Above BB", "", location=location.top, color=color.new(color.yellow, 100))
+plotchar(below, "Below BB", "", location=location.top, color=color.new(color.aqua, 100))

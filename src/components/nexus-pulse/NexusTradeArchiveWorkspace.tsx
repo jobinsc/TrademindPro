@@ -51,6 +51,7 @@ function durationHHMM(startIso?: string, endIso?: string) {
 
 function reasonLabel(r?: string) {
   if (r === 'UT_5M') return 'Sector 7 A';
+  if (r === 'UT_3M') return 'Sector 7 A (3m)';
   return r || '—';
 }
 

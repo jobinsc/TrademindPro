@@ -11,6 +11,7 @@ import {
   KV,
   uploadDailyPdfToCloud,
 } from '@/lib/nexus-pulse/nexus-cloud-store';
+import { ensureAppDataDir, getAppDataDir } from '@/lib/app-data-dir';
 
 export type NexusDailyReportMeta = {
   agent: 'NexusPulse';
@@ -72,9 +73,14 @@ export type NexusDailyIndex = {
   reports: NexusDailyReportMeta[];
 };
 
-const ROOT = process.cwd();
-const DAILY_DIR = path.join(ROOT, '.data', 'nexus-pulse', 'reports', 'daily');
-const INDEX_PATH = path.join(DAILY_DIR, 'index.json');
+function nexusDailyDir(): string {
+  return path.join(getAppDataDir(), 'nexus-pulse', 'reports', 'daily');
+}
+
+function dailyIndexPath(): string {
+  return path.join(nexusDailyDir(), 'index.json');
+}
+
 const DB_KEY = KV.dailyReports;
 
 function pythonCmd(): { cmd: string; prefix: string[] } | null {
@@ -96,11 +102,11 @@ function pythonCmd(): { cmd: string; prefix: string[] } | null {
 }
 
 export function dailyPdfPath(date: string): string {
-  return path.join(DAILY_DIR, `NexusPulse-Day-${date}.pdf`);
+  return path.join(nexusDailyDir(), `NexusPulse-Day-${date}.pdf`);
 }
 
 export function dailyMetaPath(date: string): string {
-  return path.join(DAILY_DIR, `NexusPulse-Day-${date}.meta.json`);
+  return path.join(nexusDailyDir(), `NexusPulse-Day-${date}.meta.json`);
 }
 
 export async function loadDailyReportMeta(date: string): Promise<NexusDailyReportMeta | null> {
@@ -119,7 +125,7 @@ export async function loadDailyReportMeta(date: string): Promise<NexusDailyRepor
 
 export async function loadDailyIndex(): Promise<NexusDailyIndex> {
   try {
-    const raw = await fs.readFile(INDEX_PATH, 'utf8');
+    const raw = await fs.readFile(dailyIndexPath(), 'utf8');
     return JSON.parse(raw) as NexusDailyIndex;
   } catch {
     return { updatedAt: new Date().toISOString(), reports: [] };
@@ -127,9 +133,10 @@ export async function loadDailyIndex(): Promise<NexusDailyIndex> {
 }
 
 async function saveDailyIndex(index: NexusDailyIndex): Promise<void> {
-  await fs.mkdir(DAILY_DIR, { recursive: true });
+  await ensureAppDataDir();
+  await fs.mkdir(nexusDailyDir(), { recursive: true });
   const next = { ...index, updatedAt: new Date().toISOString() };
-  await fs.writeFile(INDEX_PATH, JSON.stringify(next, null, 2), 'utf8');
+  await fs.writeFile(dailyIndexPath(), JSON.stringify(next, null, 2), 'utf8');
 }
 
 export async function upsertDailyReportMeta(meta: NexusDailyReportMeta): Promise<void> {
@@ -147,11 +154,12 @@ export async function removeDailyReport(date: string): Promise<{ ok: boolean; er
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return { ok: false, error: 'Invalid date' };
   }
-  await fs.mkdir(DAILY_DIR, { recursive: true });
+  await ensureAppDataDir();
+  await fs.mkdir(nexusDailyDir(), { recursive: true });
   const candidates = [
     dailyPdfPath(date),
     dailyMetaPath(date),
-    path.join(DAILY_DIR, `NexusPulse-Day-${date}-updated.pdf`),
+    path.join(nexusDailyDir(), `NexusPulse-Day-${date}-updated.pdf`),
   ];
   for (const p of candidates) {
     try {
@@ -180,9 +188,9 @@ export function generateNexusDailyReportSync(date: string): {
 } {
   const py = pythonCmd();
   if (!py) return { ok: false, error: 'Python not found (need py/python + fpdf)' };
-  const script = path.join(ROOT, 'scripts', 'generate-nexus-daily-report.py');
+  const script = path.join(process.cwd(), 'scripts', 'generate-nexus-daily-report.py');
   const r = spawnSync(py.cmd, [...py.prefix, script, date], {
-    cwd: ROOT,
+    cwd: process.cwd(),
     encoding: 'utf8',
     windowsHide: true,
   });

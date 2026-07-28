@@ -12,6 +12,7 @@ import {
   NIFTY_INDEX_INSTRUMENT_KEY,
 } from '@/lib/upstox-historical';
 import { buildAtmTraderContext } from '@/lib/blink-atm-trader-context';
+import { ensureAppDataDir, getAppDataDir } from '@/lib/app-data-dir';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -333,9 +334,9 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const dir = path.join(process.cwd(), '.data');
+      const dir = getAppDataDir();
       const file = path.join(dir, `blink-atm-movement-${date}.jsonl`);
-      await fs.mkdir(dir, { recursive: true });
+      await ensureAppDataDir();
       await fs.appendFile(
         file,
         `${JSON.stringify({

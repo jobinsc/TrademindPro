@@ -1,6 +1,7 @@
 import { gunzipSync } from 'zlib';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
+import { getAppDataDir } from '@/lib/app-data-dir';
 import { searchIndiaIndices } from '@/lib/india-indices';
 
 export type EquityInstrument = {
@@ -26,7 +27,7 @@ type RawInstrument = {
 
 const NSE_URL = 'https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz';
 const BSE_URL = 'https://assets.upstox.com/market-quote/instruments/exchange/BSE.json.gz';
-const CACHE_DIR = path.join(process.cwd(), '.data');
+const CACHE_DIR = getAppDataDir();
 const CACHE_FILE = path.join(CACHE_DIR, 'nse-bse-eq.json');
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12h
 

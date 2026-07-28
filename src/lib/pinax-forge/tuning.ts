@@ -6,9 +6,8 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import type { PinaxPaperTrade, PinaxSetupKind, PinaxTuningProfile } from '@/lib/pinax-forge/types';
 import { dayAdd, istDate } from '@/lib/pinax-forge/ist';
+import { getAppDataDir } from '@/lib/app-data-dir';
 import { loadPinaxSession } from '@/lib/pinax-forge/session-store';
-
-const DATA_DIR = path.join(process.cwd(), '.data');
 const BASE_CONFIDENCE = 70;
 const LOOKBACK_DAYS = 14;
 
@@ -33,7 +32,7 @@ export function defaultTuningProfile(): PinaxTuningProfile {
 
 async function listSessionDates(): Promise<string[]> {
   try {
-    const files = await fs.readdir(DATA_DIR);
+    const files = await fs.readdir(getAppDataDir());
     return files
       .filter((f) => f.startsWith('pinax-forge-session-') && f.endsWith('.json'))
       .map((f) => f.replace('pinax-forge-session-', '').replace('.json', ''))

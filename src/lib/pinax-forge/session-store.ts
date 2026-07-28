@@ -4,12 +4,11 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
+import { ensureAppDataDir, getAppDataDir } from '@/lib/app-data-dir';
 import type { PinaxForgeSession } from '@/lib/pinax-forge/types';
 
-const DATA_DIR = path.join(process.cwd(), '.data');
-
 function sessionPath(sessionDate: string): string {
-  return path.join(DATA_DIR, `pinax-forge-session-${sessionDate}.json`);
+  return path.join(getAppDataDir(), `pinax-forge-session-${sessionDate}.json`);
 }
 
 export async function loadPinaxSession(
@@ -24,6 +23,6 @@ export async function loadPinaxSession(
 }
 
 export async function savePinaxSession(session: PinaxForgeSession): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+  await ensureAppDataDir();
   await fs.writeFile(sessionPath(session.sessionDate), JSON.stringify(session, null, 2), 'utf8');
 }

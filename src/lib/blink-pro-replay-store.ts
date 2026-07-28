@@ -4,8 +4,11 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import type { Candle } from '@/lib/nejoic';
 import type { ProReplayIndexSession } from '@/lib/blink-pro-narrative';
+import { ensureAppDataDir, getAppDataDir } from '@/lib/app-data-dir';
 
-const STORE_PATH = path.join(process.cwd(), '.data', 'blink-pro-replay-1m.json');
+function storePath(): string {
+  return path.join(getAppDataDir(), 'blink-pro-replay-1m.json');
+}
 
 export type StoredProReplay = {
   version: 1;
@@ -50,15 +53,17 @@ export function summarizeReplayIndex(
 export async function saveProReplay(
   replay: StoredProReplay
 ): Promise<void> {
-  await fs.mkdir(path.dirname(STORE_PATH), { recursive: true });
-  const temporaryPath = `${STORE_PATH}.${process.pid}.tmp`;
+  await ensureAppDataDir();
+  const file = storePath();
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const temporaryPath = `${file}.${process.pid}.tmp`;
   await fs.writeFile(temporaryPath, JSON.stringify(replay), 'utf8');
-  await fs.rename(temporaryPath, STORE_PATH);
+  await fs.rename(temporaryPath, file);
 }
 
 export async function loadProReplay(): Promise<StoredProReplay | null> {
   try {
-    const raw = await fs.readFile(STORE_PATH, 'utf8');
+    const raw = await fs.readFile(storePath(), 'utf8');
     const replay = JSON.parse(raw) as StoredProReplay;
     if (replay.version !== 1 || !Array.isArray(replay.bars)) return null;
     return replay;

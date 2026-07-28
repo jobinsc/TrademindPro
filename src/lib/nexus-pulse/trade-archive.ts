@@ -5,6 +5,7 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import { ensureAppDataDir, getAppDataDir } from '@/lib/app-data-dir';
 import type { NexusPaperTrade } from '@/lib/nexus-pulse/types';
 
 export type NexusTradeMode = 'paper' | 'live';
@@ -22,14 +23,17 @@ type DayFile = {
   trades: NexusArchivedTrade[];
 };
 
-const ROOT = path.join(process.cwd(), '.data', 'nexus-pulse', 'trades');
+function tradesRoot(): string {
+  return path.join(getAppDataDir(), 'nexus-pulse', 'trades');
+}
 
 function dayPath(mode: NexusTradeMode, date: string): string {
-  return path.join(ROOT, mode, `${date}.json`);
+  return path.join(tradesRoot(), mode, `${date}.json`);
 }
 
 async function ensureDirs(mode: NexusTradeMode) {
-  await fs.mkdir(path.join(ROOT, mode), { recursive: true });
+  await ensureAppDataDir();
+  await fs.mkdir(path.join(tradesRoot(), mode), { recursive: true });
 }
 
 async function loadDay(mode: NexusTradeMode, date: string): Promise<DayFile> {
@@ -90,7 +94,7 @@ export async function listArchiveDates(mode: NexusTradeMode): Promise<string[]> 
   await ensureDirs(mode);
   const local: string[] = [];
   try {
-    const names = await fs.readdir(path.join(ROOT, mode));
+    const names = await fs.readdir(path.join(tradesRoot(), mode));
     local.push(
       ...names
         .filter((n) => /^\d{4}-\d{2}-\d{2}\.json$/.test(n))

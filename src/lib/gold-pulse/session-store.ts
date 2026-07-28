@@ -1,11 +1,14 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { ensureAppDataDir, getAppDataDir } from '@/lib/app-data-dir';
+import {
+  loadGoldSessionCloud,
+  saveGoldSessionCloud,
+} from '@/lib/gold-pulse/gold-cloud-kv';
 import type { GoldPulseSession } from '@/lib/gold-pulse/types';
 
-const DATA_DIR = path.join(process.cwd(), '.data');
-
 function sessionPath(sessionDate: string): string {
-  return path.join(DATA_DIR, `gold-pulse-session-${sessionDate}.json`);
+  return path.join(getAppDataDir(), `gold-pulse-session-${sessionDate}.json`);
 }
 
 /** UTC calendar date for international gold desk. */
@@ -20,11 +23,13 @@ export async function loadGoldSession(
     const raw = await fs.readFile(sessionPath(sessionDate), 'utf8');
     return JSON.parse(raw) as GoldPulseSession;
   } catch {
-    return null;
+    /* try cloud on Vercel */
   }
+  return loadGoldSessionCloud(sessionDate);
 }
 
 export async function saveGoldSession(session: GoldPulseSession): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+  await ensureAppDataDir();
   await fs.writeFile(sessionPath(session.sessionDate), JSON.stringify(session, null, 2), 'utf8');
+  await saveGoldSessionCloud(session);
 }

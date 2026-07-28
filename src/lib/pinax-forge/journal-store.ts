@@ -4,16 +4,15 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
+import { ensureAppDataDir, getAppDataDir } from '@/lib/app-data-dir';
 import type { PinaxJournalEntry } from '@/lib/pinax-forge/types';
 
-const DATA_DIR = path.join(process.cwd(), '.data');
-
 function journalPath(sessionDate: string): string {
-  return path.join(DATA_DIR, `pinax-forge-journal-${sessionDate}.jsonl`);
+  return path.join(getAppDataDir(), `pinax-forge-journal-${sessionDate}.jsonl`);
 }
 
 async function ensureDir() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+  await ensureAppDataDir();
 }
 
 export async function appendPinaxJournal(

@@ -4,6 +4,7 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import { ensureAppDataDir, getAppDataDir } from '@/lib/app-data-dir';
 import {
   DEFAULT_BT_PARAMS,
   fetchGoldPulseCandles,
@@ -31,6 +32,10 @@ import {
 } from '@/lib/gold-pulse/strategies';
 import { exitReasonLabel } from '@/lib/gold-pulse/signals';
 import { goldTradeOpenDay } from '@/lib/gold-pulse/backtest';
+import {
+  loadGoldStudyReportsCloud,
+  saveGoldStudyReportsCloud,
+} from '@/lib/gold-pulse/gold-cloud-kv';
 
 export type GoldStudyReportMeta = {
   agent: 'GoldPulse';
@@ -91,9 +96,17 @@ export type GoldStudyReportMeta = {
 
 export const GOLD_END_STUDY_DATE = 'end-study';
 
-const OUT_DIR = path.join(process.cwd(), '.data', 'gold-pulse', 'reports', 'daily');
-const END_STUDY_PATH = path.join(OUT_DIR, 'GoldPulse-End-Study.meta.json');
-const INDEX_PATH = path.join(OUT_DIR, 'index.json');
+function goldReportsDir(): string {
+  return path.join(getAppDataDir(), 'gold-pulse', 'reports', 'daily');
+}
+
+function indexPath(): string {
+  return path.join(goldReportsDir(), 'index.json');
+}
+
+function endStudyPath(): string {
+  return path.join(goldReportsDir(), 'GoldPulse-End-Study.meta.json');
+}
 
 export function isValidGoldReportKey(key: string): boolean {
   if (key === GOLD_END_STUDY_DATE) return true;
@@ -418,25 +431,29 @@ function metaFromFullRun(
 }
 
 async function persistReport(meta: GoldStudyReportMeta): Promise<void> {
+  const outDir = goldReportsDir();
   const fileName = reportStorageFile(meta);
-  await fs.mkdir(OUT_DIR, { recursive: true });
-  await fs.writeFile(path.join(OUT_DIR, fileName), JSON.stringify(meta, null, 2), 'utf8');
+  await ensureAppDataDir();
+  await fs.mkdir(outDir, { recursive: true });
+  await fs.writeFile(path.join(outDir, fileName), JSON.stringify(meta, null, 2), 'utf8');
 
   let index: { updatedAt: string; reports: GoldStudyReportMeta[] } = {
     updatedAt: meta.generatedAt,
     reports: [],
   };
   try {
-    index = JSON.parse(await fs.readFile(INDEX_PATH, 'utf8')) as typeof index;
+    index = JSON.parse(await fs.readFile(indexPath(), 'utf8')) as typeof index;
   } catch {
-    /* new */
+    const cloud = await loadGoldStudyReportsCloud();
+    if (cloud.length) index.reports = cloud;
   }
   index.reports = [
     ...index.reports.filter((r) => r.date !== meta.date),
     meta,
   ].sort((a, b) => b.date.localeCompare(a.date));
   index.updatedAt = meta.generatedAt;
-  await fs.writeFile(INDEX_PATH, JSON.stringify(index, null, 2), 'utf8');
+  await fs.writeFile(indexPath(), JSON.stringify(index, null, 2), 'utf8');
+  await saveGoldStudyReportsCloud(index.reports);
 }
 
 /** Full Yahoo window using start/end = first/last bar day in sample. */
@@ -455,7 +472,7 @@ export async function runGoldEndStudyReport(
 
 export async function loadGoldEndStudyReport(): Promise<GoldStudyReportMeta | null> {
   try {
-    const raw = await fs.readFile(END_STUDY_PATH, 'utf8');
+    const raw = await fs.readFile(endStudyPath(), 'utf8');
     return JSON.parse(raw) as GoldStudyReportMeta;
   } catch {
     const list = await listGoldStudyReports();
@@ -465,21 +482,23 @@ export async function loadGoldEndStudyReport(): Promise<GoldStudyReportMeta | nu
 
 export async function listGoldStudyReports(): Promise<GoldStudyReportMeta[]> {
   try {
-    const index = JSON.parse(await fs.readFile(INDEX_PATH, 'utf8')) as {
+    const index = JSON.parse(await fs.readFile(indexPath(), 'utf8')) as {
       reports?: GoldStudyReportMeta[];
     };
-    return index.reports || [];
+    if (index.reports?.length) return index.reports;
   } catch {
-    return [];
+    /* fall through */
   }
+  return loadGoldStudyReportsCloud();
 }
 
 export async function loadGoldStudyReport(date: string): Promise<GoldStudyReportMeta | null> {
+  const outDir = goldReportsDir();
   const paths = [
-    path.join(OUT_DIR, `GoldPulse-Day-${date}.meta.json`),
-    path.join(OUT_DIR, `GoldPulse-Range-${date}.meta.json`),
-    path.join(OUT_DIR, `GoldPulse-Detailed-${date}.meta.json`),
-    END_STUDY_PATH,
+    path.join(outDir, `GoldPulse-Day-${date}.meta.json`),
+    path.join(outDir, `GoldPulse-Range-${date}.meta.json`),
+    path.join(outDir, `GoldPulse-Detailed-${date}.meta.json`),
+    endStudyPath(),
   ];
   for (const p of paths) {
     try {
@@ -494,12 +513,13 @@ export async function loadGoldStudyReport(date: string): Promise<GoldStudyReport
 }
 
 export async function removeGoldStudyReport(date: string): Promise<{ ok: boolean }> {
+  const outDir = goldReportsDir();
   const paths = [
-    path.join(OUT_DIR, `GoldPulse-Day-${date}.meta.json`),
-    path.join(OUT_DIR, `GoldPulse-Range-${date}.meta.json`),
-    path.join(OUT_DIR, `GoldPulse-Detailed-${date}.meta.json`),
+    path.join(outDir, `GoldPulse-Day-${date}.meta.json`),
+    path.join(outDir, `GoldPulse-Range-${date}.meta.json`),
+    path.join(outDir, `GoldPulse-Detailed-${date}.meta.json`),
   ];
-  if (date === GOLD_END_STUDY_DATE) paths.push(END_STUDY_PATH);
+  if (date === GOLD_END_STUDY_DATE) paths.push(endStudyPath());
   for (const p of paths) {
     try {
       await fs.unlink(p);
@@ -508,11 +528,13 @@ export async function removeGoldStudyReport(date: string): Promise<{ ok: boolean
     }
   }
   const list = (await listGoldStudyReports()).filter((r) => r.date !== date);
-  await fs.mkdir(OUT_DIR, { recursive: true });
+  await ensureAppDataDir();
+  await fs.mkdir(outDir, { recursive: true });
   await fs.writeFile(
-    INDEX_PATH,
+    indexPath(),
     JSON.stringify({ updatedAt: new Date().toISOString(), reports: list }, null, 2),
     'utf8'
   );
+  await saveGoldStudyReportsCloud(list);
   return { ok: true };
 }

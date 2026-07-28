@@ -6,11 +6,13 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
+import { ensureAppDataDir, getAppDataDir } from '@/lib/app-data-dir';
 import type { SessionStudy, StudyLabReport } from '@/lib/blink-nifty-study-lab';
 import type { GradeReportSummary } from '@/lib/blink-opportunity-grade';
 
-const MEMORY_DIR = path.join(process.cwd(), '.data');
-const MEMORY_FILE = path.join(MEMORY_DIR, 'blink-nifty-study-memory.json');
+function memoryFile(): string {
+  return path.join(getAppDataDir(), 'blink-nifty-study-memory.json');
+}
 
 export type DayMemory = SessionStudy & {
   studiedAt: string;
@@ -101,7 +103,7 @@ function recomputeSummary(mem: BlinkNiftyStudyMemory) {
 
 export async function loadBlinkStudyMemory(): Promise<BlinkNiftyStudyMemory> {
   try {
-    const raw = await fs.readFile(MEMORY_FILE, 'utf8');
+    const raw = await fs.readFile(memoryFile(), 'utf8');
     const parsed = JSON.parse(raw) as BlinkNiftyStudyMemory;
     if (!parsed?.days || parsed.version !== 1) return emptyMemory();
     return parsed;
@@ -113,9 +115,9 @@ export async function loadBlinkStudyMemory(): Promise<BlinkNiftyStudyMemory> {
 export async function saveBlinkStudyMemory(
   mem: BlinkNiftyStudyMemory
 ): Promise<void> {
-  await fs.mkdir(MEMORY_DIR, { recursive: true });
+  await ensureAppDataDir();
   recomputeSummary(mem);
-  await fs.writeFile(MEMORY_FILE, JSON.stringify(mem, null, 2), 'utf8');
+  await fs.writeFile(memoryFile(), JSON.stringify(mem, null, 2), 'utf8');
 }
 
 /** Merge a study report into agent memory (overwrites same dates). */
@@ -181,5 +183,5 @@ export function memoryToReport(mem: BlinkNiftyStudyMemory): StudyLabReport | nul
 }
 
 export function studyMemoryPath(): string {
-  return MEMORY_FILE;
+  return memoryFile();
 }

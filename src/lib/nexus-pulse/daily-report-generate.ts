@@ -9,12 +9,8 @@ import {
   metaFromStory,
   type ReportTradeRow,
 } from '@/lib/nexus-pulse/daily-report-build';
-import {
-  dailyMetaPath,
-  dailyPdfPath,
-  type NexusDailyReportMeta,
-  upsertDailyReportMeta,
-} from '@/lib/nexus-pulse/daily-report-store';
+import { ensureAppDataDir, getAppDataDir } from '@/lib/app-data-dir';
+import { dailyMetaPath, dailyPdfPath, type NexusDailyReportMeta, upsertDailyReportMeta } from '@/lib/nexus-pulse/daily-report-store';
 import { writeNexusDailyReportPdf } from '@/lib/nexus-pulse/daily-report-pdf';
 import { replayNexusRealOptionsForDay } from '@/lib/nexus-pulse/real-option-study';
 import type { NexusLaneId } from '@/lib/nexus-pulse/rules';
@@ -146,7 +142,8 @@ export async function generateNexusDailyReportNode(opts: {
     studyByLane,
   });
 
-  const outDir = path.join(process.cwd(), '.data', 'nexus-pulse', 'reports', 'daily');
+  const outDir = path.join(getAppDataDir(), 'nexus-pulse', 'reports', 'daily');
+  await ensureAppDataDir();
   await fs.mkdir(outDir, { recursive: true });
   await fs.writeFile(dailyMetaPath(date), JSON.stringify(meta, null, 2), 'utf8');
 

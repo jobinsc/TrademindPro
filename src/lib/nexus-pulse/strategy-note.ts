@@ -6,11 +6,17 @@
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
+import { ensureAppDataDir, getAppDataDir } from '@/lib/app-data-dir';
 
-const DATA_DIR = path.join(process.cwd(), '.data');
-const VAULT_PATH = path.join(DATA_DIR, 'nexus-pulse-strategy-vault.json');
-const NOTE_PATH = path.join(DATA_DIR, 'nexus-pulse-strategy-note.json');
-const OTP_DEBUG_PATH = path.join(DATA_DIR, 'nexus-pulse-note-otp-last.json');
+function dataPaths() {
+  const dir = getAppDataDir();
+  return {
+    dir,
+    vault: path.join(dir, 'nexus-pulse-strategy-vault.json'),
+    note: path.join(dir, 'nexus-pulse-strategy-note.json'),
+    otpDebug: path.join(dir, 'nexus-pulse-note-otp-last.json'),
+  };
+}
 
 export type NexusStrategyVault = {
   passwordHash: string | null;
@@ -166,13 +172,13 @@ This note is password-gated for admin. Reset via Gmail OTP if needed.
 }
 
 async function ensureDataDir() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+  await ensureAppDataDir();
 }
 
 export async function loadVault(): Promise<NexusStrategyVault> {
   await ensureDataDir();
   try {
-    const raw = await fs.readFile(VAULT_PATH, 'utf8');
+    const raw = await fs.readFile(dataPaths().vault, 'utf8');
     return JSON.parse(raw) as NexusStrategyVault;
   } catch {
     const empty: NexusStrategyVault = {
@@ -192,14 +198,14 @@ export async function loadVault(): Promise<NexusStrategyVault> {
 export async function saveVault(vault: NexusStrategyVault): Promise<void> {
   await ensureDataDir();
   const next = { ...vault, updatedAt: new Date().toISOString() };
-  await fs.writeFile(VAULT_PATH, JSON.stringify(next, null, 2), 'utf8');
+  await fs.writeFile(dataPaths().vault, JSON.stringify(next, null, 2), 'utf8');
   void import('@/lib/nexus-pulse/nexus-cloud-store').then((m) => m.syncStrategyPackToCloud());
 }
 
 export async function loadNoteDoc(): Promise<NexusStrategyNoteDoc> {
   await ensureDataDir();
   try {
-    const raw = await fs.readFile(NOTE_PATH, 'utf8');
+    const raw = await fs.readFile(dataPaths().note, 'utf8');
     const doc = JSON.parse(raw) as NexusStrategyNoteDoc;
     if ((doc.schemaVersion ?? 0) < NEXUS_STRATEGY_NOTE_SCHEMA) {
       const refreshed: NexusStrategyNoteDoc = {
@@ -227,7 +233,7 @@ export async function loadNoteDoc(): Promise<NexusStrategyNoteDoc> {
 export async function saveNoteDoc(doc: NexusStrategyNoteDoc): Promise<void> {
   await ensureDataDir();
   const next = { ...doc, updatedAt: new Date().toISOString() };
-  await fs.writeFile(NOTE_PATH, JSON.stringify(next, null, 2), 'utf8');
+  await fs.writeFile(dataPaths().note, JSON.stringify(next, null, 2), 'utf8');
   void import('@/lib/nexus-pulse/nexus-cloud-store').then((m) => m.syncStrategyPackToCloud());
 }
 
@@ -283,7 +289,7 @@ export async function issueResetOtp(): Promise<{ otp: string; expiresAt: string 
   vault.resetOtpExpiresAt = expiresAt;
   await saveVault(vault);
   await fs.writeFile(
-    OTP_DEBUG_PATH,
+    dataPaths().otpDebug,
     JSON.stringify(
       {
         at: new Date().toISOString(),
@@ -312,7 +318,7 @@ export async function consumeResetOtp(): Promise<void> {
   vault.resetOtpExpiresAt = null;
   await saveVault(vault);
   try {
-    await fs.unlink(OTP_DEBUG_PATH);
+    await fs.unlink(dataPaths().otpDebug);
   } catch {
     // ignore
   }

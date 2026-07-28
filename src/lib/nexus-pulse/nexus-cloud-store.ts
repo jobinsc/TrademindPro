@@ -5,6 +5,7 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import { getAppDataDir } from '@/lib/app-data-dir';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import {
   findNexusAdminUserId,
@@ -43,10 +44,10 @@ type StrategyPack = {
   updatedAt: string;
 };
 
-const TRADES_ROOT = path.join(process.cwd(), '.data', 'nexus-pulse', 'trades');
-const DAILY_DIR = path.join(process.cwd(), '.data', 'nexus-pulse', 'reports', 'daily');
-const STRATEGY_VAULT = path.join(process.cwd(), '.data', 'nexus-pulse-strategy-vault.json');
-const STRATEGY_NOTE = path.join(process.cwd(), '.data', 'nexus-pulse-strategy-note.json');
+const TRADES_ROOT = path.join(getAppDataDir(), 'nexus-pulse', 'trades');
+const DAILY_DIR = path.join(getAppDataDir(), 'nexus-pulse', 'reports', 'daily');
+const STRATEGY_VAULT = path.join(getAppDataDir(), 'nexus-pulse-strategy-vault.json');
+const STRATEGY_NOTE = path.join(getAppDataDir(), 'nexus-pulse-strategy-note.json');
 
 async function readTradeIndex(): Promise<TradeIndex> {
   const fromCloud = await readNexusAdminKv<TradeIndex>(KV.tradeIndex);

@@ -4,6 +4,7 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import { ensureAppDataDir, getAppDataDir } from '@/lib/app-data-dir';
 import type { GoldPaperTrade } from '@/lib/gold-pulse/types';
 
 export type GoldArchivedTrade = GoldPaperTrade & {
@@ -17,13 +18,14 @@ type DayFile = {
   trades: GoldArchivedTrade[];
 };
 
-const ROOT = path.join(process.cwd(), '.data', 'gold-pulse', 'trades', 'paper');
+const ROOT = path.join(getAppDataDir(), 'gold-pulse', 'trades', 'paper');
 
 function dayPath(date: string): string {
   return path.join(ROOT, `${date}.json`);
 }
 
 async function ensureDir() {
+  await ensureAppDataDir();
   await fs.mkdir(ROOT, { recursive: true });
 }
 

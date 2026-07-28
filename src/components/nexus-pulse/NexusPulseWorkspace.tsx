@@ -12,7 +12,7 @@ import {
   type NexusLaneId,
 } from '@/lib/nexus-pulse/rules';
 import type { NexusAtmBoard, NexusPaperTrade, NexusPulseSession } from '@/lib/nexus-pulse/types';
-import { fetchLocalPost, isLocalAppHost } from '@/lib/local-server';
+import { fetchAppPost } from '@/lib/local-server';
 import { getUpstoxAccessToken, isUpstoxConnected } from '@/lib/upstox-client';
 import { useAuth } from '@/components/auth/AuthProvider';
 
@@ -201,7 +201,7 @@ export default function NexusPulseWorkspace() {
   const callApi = useCallback(async (path: string) => {
     const t = token();
     if (!t) throw new Error('Connect Upstox in Settings first.');
-    return fetchLocalPost<{ ok: boolean; session: NexusPulseSession; error?: string }>({
+    return fetchAppPost<{ ok: boolean; session: NexusPulseSession; error?: string }>({
       path,
       token: t,
     });
@@ -234,7 +234,7 @@ export default function NexusPulseWorkspace() {
     setSettingsBusy('Saving...');
     setError('');
     try {
-      const data = await fetchLocalPost<{ ok: boolean; session: NexusPulseSession; error?: string }>({
+      const data = await fetchAppPost<{ ok: boolean; session: NexusPulseSession; error?: string }>({
         path: '/api/nexus-pulse/settings',
         token: t,
         body: {
@@ -255,7 +255,7 @@ export default function NexusPulseWorkspace() {
     const t = token();
     if (!t || !pollRef.current) return;
     try {
-      const data = await fetchLocalPost<{
+      const data = await fetchAppPost<{
         ok: boolean;
         board?: NexusAtmBoard;
         spot?: number;
@@ -385,7 +385,7 @@ export default function NexusPulseWorkspace() {
     setBacktestBusy('Real option study (Upstox)… may take a few minutes on mobile');
     setError('');
     try {
-      const data = await fetchLocalPost<{ ok: boolean; run: NexusBacktestSummary; error?: string }>({
+      const data = await fetchAppPost<{ ok: boolean; run: NexusBacktestSummary; error?: string }>({
         path: '/api/nexus-pulse/backtest',
         token: t,
         body: {
@@ -498,12 +498,6 @@ export default function NexusPulseWorkspace() {
           PAPER ONLY
         </div>
       </div>
-
-      {!isLocalAppHost() && (
-        <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">
-          Run locally: http://localhost:3000/app/nexus-pulse
-        </p>
-      )}
 
       {!live && (
         <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm">

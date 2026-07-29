@@ -125,3 +125,31 @@ export async function loadNexusBArchiveDay(
   }
   return local;
 }
+
+/** Paper/live closed trades for a day (for desk history hydration). */
+export async function loadNexusBClosedTradesForDay(
+  mode: NexusBTradeMode,
+  date: string
+): Promise<NexusPaperTrade[]> {
+  const day = await loadNexusBArchiveDay(mode, date);
+  return day.trades
+    .filter((t) => t.status === 'closed')
+    .map((t) => {
+      const { sessionDate: _sd, mode: _mode, archivedAt: _at, ...trade } = t;
+      return trade as NexusPaperTrade;
+    });
+}
+
+/** Merge archive into session closed list by id (session wins on conflict). */
+export function mergeNexusBClosedTrades(
+  sessionClosed: NexusPaperTrade[],
+  archivedClosed: NexusPaperTrade[]
+): NexusPaperTrade[] {
+  const byId = new Map(sessionClosed.map((t) => [t.id, t]));
+  for (const t of archivedClosed) {
+    if (!byId.has(t.id)) byId.set(t.id, t);
+  }
+  return [...byId.values()].sort((a, b) =>
+    String(a.openedAt || '').localeCompare(String(b.openedAt || ''))
+  );
+}

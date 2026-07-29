@@ -18,6 +18,7 @@ import { resampleMinutes } from '@/lib/nexus-pulse/resample';
 import { NEXUS_PULSE_B_RULES as NEXUS_PULSE_RULES, SENSEX_INDEX_INSTRUMENT_KEY, type NexusBLaneId as NexusLaneId } from '@/lib/nexus-pulse-b/rules';
 import { runUtBot } from '@/lib/nexus-pulse/ut-bot';
 import { shouldTrailExit } from '@/lib/nexus-pulse/paper-broker';
+import { loadStudyRunCache, saveStudyRunCache } from '@/lib/nexus-pulse/study-cache';
 import type { Candle } from '@/lib/nejoic';
 import type { NexusPaperTrade } from '@/lib/nexus-pulse-b/types';
 
@@ -36,6 +37,10 @@ export type NexusBRealOptionStudyRun = {
   premiumModel: string;
   optionFetches: number;
   optionMisses: number;
+  /** Individual study trades (same engine as summary) — for desk trades bar. */
+  trades: NexusPaperTrade[];
+  cachedAt?: string;
+  fromCache?: boolean;
   byLane: Partial<
     Record<
       NexusLaneId,
@@ -218,6 +223,7 @@ async function backtestDay(
   let entrySpot = 0;
   let entryTs = '';
   let maxUp = 0;
+  let lastMark = 0;
   let last3mTs: string | null = null;
 
   for (let i = 40; i < df1m.length; i++) {
@@ -265,10 +271,12 @@ async function backtestDay(
       openSide = null;
       openIk = '';
       maxUp = 0;
+      lastMark = 0;
     };
 
     if (openSide) {
-      const p = (await tape.premiumAt(openIk, day, tsMs)) ?? entryPrem;
+      const p = ((await tape.premiumAt(openIk, day, tsMs)) ?? lastMark) || entryPrem;
+      lastMark = p;
       const up = Math.max(0, p - entryPrem);
       maxUp = Math.max(maxUp, up);
 
@@ -342,13 +350,14 @@ async function backtestDay(
     entryPrem = prem;
     entryTs = bar.t;
     maxUp = 0;
+    lastMark = prem;
     last3mTs = t3;
   }
 
   if (openSide) {
     const bar = df1m[df1m.length - 1];
     const tsMs = new Date(bar.t).getTime();
-    const p = (await tape.premiumAt(openIk, day, tsMs)) ?? entryPrem;
+    const p = ((await tape.premiumAt(openIk, day, tsMs)) ?? lastMark) || entryPrem;
     const gross = round2((p - entryPrem) * lot);
     trades.push({
       id: `study-${day}-eod`,
@@ -401,6 +410,7 @@ export async function runNexusBRealOptionStudy(opts: {
   fromDate: string;
   toDate: string;
   activeLanes: NexusLaneId[];
+  forceRefresh?: boolean;
 }): Promise<NexusBRealOptionStudyRun> {
   const todayIso = istDate();
   const fromDate = opts.fromDate.slice(0, 10);
@@ -422,6 +432,22 @@ export async function runNexusBRealOptionStudy(opts: {
     opts.activeLanes.length > 0
       ? opts.activeLanes
       : (['morning_open_stop_15'] as NexusLaneId[]);
+
+  if (!opts.forceRefresh) {
+    const cached = await loadStudyRunCache<NexusBRealOptionStudyRun>({
+      desk: 'sensex',
+      fromDate,
+      toDate,
+      lanes,
+    });
+    if (cached?.trades) {
+      return {
+        ...cached,
+        fromCache: true,
+        note: `${cached.note || ''} · Served from cache (same rules; click Force refresh to re-pull Upstox).`.trim(),
+      };
+    }
+  }
 
   const tape = new OptionTape(opts.accessToken, todayIso);
   const lot = NEXUS_PULSE_RULES.sensexLotSize;
@@ -451,7 +477,8 @@ export async function runNexusBRealOptionStudy(opts: {
     byLane[laneId] = summarizeTrades(allTrades.filter((t) => t.laneId === laneId));
   }
 
-  return {
+  const includesToday = fromDate <= todayIso && toDate >= todayIso;
+  const run: NexusBRealOptionStudyRun = {
     fromDate,
     toDate,
     activeLanes: lanes,
@@ -466,9 +493,18 @@ export async function runNexusBRealOptionStudy(opts: {
     optionFetches: tape.fetches,
     optionMisses: tape.misses,
     byLane,
+    trades: allTrades.sort((a, b) => String(a.openedAt).localeCompare(String(b.openedAt))),
+    fromCache: false,
     note:
-      'Sector 7 B Sensex — same UT 3m/5m as Sector 7 A + real Sensex ATM option LTP. Gross = (exit−entry)×20; net − ₹70/trade.',
+      'Sector 7 B Sensex — same UT 3m/5m as Sector 7 A + real Sensex ATM option LTP. Gross = (exit−entry)×20; net − ₹70/trade.' +
+      (includesToday
+        ? ' WARNING: range includes TODAY — live FO candles still form; Force refresh can change P&L until the session is closed. Past closed days are stable.'
+        : '') +
+      (tape.misses > 0 ? ` Option mark misses: ${tape.misses}.` : ''),
   };
+
+  await saveStudyRunCache({ desk: 'sensex', fromDate, toDate, lanes, run }).catch(() => undefined);
+  return run;
 }
 
 /** Single-day replay — same trades as Real Option Study for one date. */

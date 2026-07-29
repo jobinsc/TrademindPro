@@ -17,8 +17,8 @@ import {
   shouldSquareOffAll,
 } from '@/lib/nexus-pulse/lanes';
 import { openNexusPaperTrade, updateOpenTrades } from '@/lib/nexus-pulse/paper-broker';
-import { NEXUS_LANES, NEXUS_PULSE_RULES, NEXUS_UT_3M, type NexusLaneId } from '@/lib/nexus-pulse/rules';
-import { resampleMinutes } from '@/lib/nexus-pulse/resample';
+import { NEXUS_LANES, NEXUS_PULSE_RULES, NEXUS_UT_3M, NEXUS_UT_5M, type NexusLaneId } from '@/lib/nexus-pulse/rules';
+import { lastClosedBar, resampleMinutes } from '@/lib/nexus-pulse/resample';
 import { evaluateUtV2Entry } from '@/lib/nexus-pulse/signals';
 import { runUtBot } from '@/lib/nexus-pulse/ut-bot';
 import { loadNexusSession, saveNexusSession } from '@/lib/nexus-pulse/session-store';
@@ -45,6 +45,35 @@ let atmLegCache: {
 } | null = null;
 const ATM_CACHE_TTL_MS = 3 * 60_000;
 
+function openTradesHaveKeys(trades: { instrumentKey: string }[]): boolean {
+  return trades.some((t) => Boolean(t.instrumentKey));
+}
+
+/** Use last closed 1m option candle close as mark (study tape.premiumAt style). */
+async function fillMarksFromOption1mClose(
+  accessToken: string,
+  markMap: Map<string, number>,
+  trades: { instrumentKey: string }[]
+): Promise<void> {
+  const keys = [...new Set(trades.map((t) => t.instrumentKey).filter(Boolean))];
+  await Promise.all(
+    keys.map(async (instrumentKey) => {
+      try {
+        const { candles } = await fetchUpstoxIntradayCandles({
+          accessToken,
+          instrumentKey,
+          unit: 'minutes',
+          interval: 1,
+        });
+        const closed = lastClosedBar(candles, 1);
+        if (closed && closed.close > 0) markMap.set(instrumentKey, closed.close);
+      } catch {
+        /* keep quote LTP fallback already in map */
+      }
+    })
+  );
+}
+
 function defaultSettings(): NexusPulseSettings {
   return {
     activeLanes: [...DEFAULT_ACTIVE_LANES],
@@ -57,6 +86,8 @@ function normalizeSession(session: NexusPulseSession): NexusPulseSession {
   const raw = session as NexusPulseSession & { settings?: Partial<NexusPulseSettings>; guard?: NexusPulseSession['guard'] };
   return {
     ...session,
+    lastConsumed3mTs: session.lastConsumed3mTs ?? null,
+    lastExitEval1mTs: session.lastExitEval1mTs ?? null,
     settings: {
       ...defaultSettings(),
       ...raw.settings,
@@ -102,6 +133,8 @@ function shell(sessionDate: string, spot: number): NexusPulseSession {
     ut3m: null,
     ut5m: null,
     lastSignal: null,
+    lastConsumed3mTs: null,
+    lastExitEval1mTs: null,
     settings: defaultSettings(),
     guard: { blockedNewEntries: false, reason: null, dayNetAtDecision: 0 },
     openTrades: [],
@@ -164,33 +197,95 @@ async function liveNiftySpot(accessToken: string, fallback: number): Promise<num
   return fallback;
 }
 
+function legSideFromMeta(meta: {
+  instrumentKey: string;
+  tradingSymbol: string;
+  strike: number;
+  expiry?: string;
+}): 'CE' | 'PE' | null {
+  const sym = String(meta.tradingSymbol || meta.instrumentKey || '').toUpperCase();
+  if (/\bCE\b/.test(sym) || /CE\s*\d/.test(sym) || /CE$/.test(sym) || sym.endsWith('CE')) return 'CE';
+  if (/\bPE\b/.test(sym) || /PE\s*\d/.test(sym) || /PE$/.test(sym) || sym.endsWith('PE')) return 'PE';
+  return null;
+}
+
+/** Parse strike+side from Upstox symbols like "NIFTY 24200 PE" or "NIFTY2680424200PE". */
+function strikeSideFromSymbol(symRaw: string): { strike: number; side: 'CE' | 'PE' } | null {
+  const sym = String(symRaw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const compact = sym.match(/(?:NIFTY|SENSEX|BANKNIFTY)(\d{2})(\d{2})(\d{2})(\d{3,6})(CE|PE)$/);
+  if (compact) {
+    return { strike: Number(compact[4]), side: compact[5] as 'CE' | 'PE' };
+  }
+  const spaced = String(symRaw || '')
+    .toUpperCase()
+    .match(/(\d{3,7})\s*(CE|PE)\b/);
+  if (spaced) return { strike: Number(spaced[1]), side: spaced[2] as 'CE' | 'PE' };
+  const tail = sym.match(/(\d{3,7})(CE|PE)$/);
+  if (tail) return { strike: Number(tail[1]), side: tail[2] as 'CE' | 'PE' };
+  return null;
+}
+
 function legFromQuote(
   meta: { instrumentKey: string; tradingSymbol: string; strike: number; expiry?: string },
   quotes: Awaited<ReturnType<typeof fetchUpstoxQuotes>>
 ): NexusAtmLegQuote | null {
   const key = meta.instrumentKey.replace(/:/g, '|');
-  const q = quotes.find(
-    (row) =>
-      row.instrumentKey.replace(/:/g, '|') === key ||
-      (() => {
-        const sym = String(row.symbol || '').toUpperCase();
-        // Robust strike match: extract digits before CE/PE token (e.g. "NIFTY23900CE").
-        const m = sym.match(/(\d{2,7})(?:\s*)?(CE|PE)\b/);
-        const strikeFromSym = m ? Number(m[1]) : NaN;
-        if (Number.isFinite(strikeFromSym) && strikeFromSym > 0) return strikeFromSym === meta.strike;
-        // Fallback: plain contains.
-        return sym.includes(String(meta.strike));
-      })()
-  );
-  if (!q || q.lastPrice <= 0) return null;
+  const wantedSide = legSideFromMeta(meta);
+  const q = quotes.find((row) => {
+    const rowKey = row.instrumentKey.replace(/:/g, '|');
+    if (rowKey === key) return true;
+    // Upstox often returns map keys like NSE_FO:NIFTY2680424200PE — match token suffix.
+    if (key.includes('|') && rowKey.endsWith(key.slice(key.indexOf('|')))) return true;
+
+    const parsed =
+      strikeSideFromSymbol(row.symbol) ||
+      strikeSideFromSymbol(row.instrumentKey) ||
+      null;
+    if (!parsed) return false;
+    if (parsed.strike !== meta.strike) return false;
+    if (wantedSide && parsed.side !== wantedSide) return false;
+    return true;
+  });
+  if (!q) return null;
+  const ltp =
+    q.lastPrice > 0
+      ? q.lastPrice
+      : q.bestBid && q.bestAsk
+        ? (q.bestBid + q.bestAsk) / 2
+        : q.bestAsk || q.bestBid || 0;
+  if (ltp <= 0) {
+    return {
+      instrumentKey: meta.instrumentKey,
+      tradingSymbol: meta.tradingSymbol,
+      strike: meta.strike,
+      expiry: meta.expiry,
+      ltp: 0,
+      bid: q.bestBid ?? null,
+      ask: q.bestAsk ?? null,
+    };
+  }
   return {
     instrumentKey: meta.instrumentKey,
     tradingSymbol: meta.tradingSymbol,
     strike: meta.strike,
     expiry: meta.expiry,
-    ltp: q.lastPrice,
+    ltp,
     bid: q.bestBid ?? null,
     ask: q.bestAsk ?? null,
+  };
+}
+
+function metaFromLeg(leg: NexusAtmLegQuote): {
+  instrumentKey: string;
+  tradingSymbol: string;
+  strike: number;
+  expiry?: string;
+} {
+  return {
+    instrumentKey: leg.instrumentKey,
+    tradingSymbol: leg.tradingSymbol,
+    strike: leg.strike,
+    expiry: leg.expiry,
   };
 }
 
@@ -218,6 +313,7 @@ export async function refreshAtmBoard(
       accessToken,
       spot,
       wantedSide: 'CE',
+      minPremiumFloor: NEXUS_PULSE_RULES.minPremiumFloor,
     });
     const ce = picked.candidates.find((c) => c.side === 'CE');
     const pe = picked.candidates.find((c) => c.side === 'PE');
@@ -225,7 +321,7 @@ export async function refreshAtmBoard(
       atmLegCache = {
         at: now,
         anchorSpot: spot,
-        atmStrike: ce.strike,
+        atmStrike: Math.round(spot / 50) * 50,
         expiry: picked.expiry ?? ce.expiry ?? null,
         ce: {
           instrumentKey: ce.instrumentKey,
@@ -243,6 +339,58 @@ export async function refreshAtmBoard(
     }
   }
 
+  // Open trades must seed the board even when the option-chain pick failed —
+  // otherwise locks never apply (they used to run only after this early return).
+  if (!atmLegCache && (opts?.lockedCeMeta || opts?.lockedPeMeta)) {
+    const ceLock = opts.lockedCeMeta;
+    const peLock = opts.lockedPeMeta;
+    if (ceLock && peLock) {
+      atmLegCache = {
+        at: now,
+        anchorSpot: spot,
+        atmStrike: Math.round(spot / 50) * 50 || ceLock.strike,
+        expiry: ceLock.expiry ?? peLock.expiry ?? null,
+        ce: metaFromLeg(ceLock),
+        pe: metaFromLeg(peLock),
+      };
+    } else if (ceLock || peLock) {
+      const locked = (ceLock ?? peLock)!;
+      const picked = spot > 0
+        ? await pickPinaxOptions({
+            accessToken,
+            spot,
+            wantedSide: ceLock ? 'PE' : 'CE',
+            minPremiumFloor: NEXUS_PULSE_RULES.minPremiumFloor,
+          })
+        : null;
+      const other = picked?.candidates.find((c) => c.side === (ceLock ? 'PE' : 'CE'));
+      if (other) {
+        atmLegCache = {
+          at: now,
+          anchorSpot: spot,
+          atmStrike: Math.round(spot / 50) * 50 || locked.strike,
+          expiry: locked.expiry ?? other.expiry ?? null,
+          ce: ceLock
+            ? metaFromLeg(ceLock)
+            : {
+                instrumentKey: other.instrumentKey,
+                tradingSymbol: other.tradingSymbol,
+                strike: other.strike,
+                expiry: other.expiry,
+              },
+          pe: peLock
+            ? metaFromLeg(peLock)
+            : {
+                instrumentKey: other.instrumentKey,
+                tradingSymbol: other.tradingSymbol,
+                strike: other.strike,
+                expiry: other.expiry,
+              },
+        };
+      }
+    }
+  }
+
   if (!atmLegCache) {
     return {
       spot,
@@ -251,26 +399,16 @@ export async function refreshAtmBoard(
       ce: null,
       pe: null,
       quotedAt: new Date().toISOString(),
-      note: 'ATM CE/PE not resolved yet — check Upstox option chain',
+      note: 'ATM CE/PE not resolved yet - check Upstox option chain',
     };
   }
 
   // If a trade is already open on CE/PE, force the board's strike keys to match it.
   if (opts?.lockedCe && opts.lockedCeMeta) {
-    atmLegCache.ce = {
-      instrumentKey: opts.lockedCeMeta.instrumentKey,
-      tradingSymbol: opts.lockedCeMeta.tradingSymbol,
-      strike: opts.lockedCeMeta.strike,
-      expiry: opts.lockedCeMeta.expiry,
-    };
+    atmLegCache.ce = metaFromLeg(opts.lockedCeMeta);
   }
   if (opts?.lockedPe && opts.lockedPeMeta) {
-    atmLegCache.pe = {
-      instrumentKey: opts.lockedPeMeta.instrumentKey,
-      tradingSymbol: opts.lockedPeMeta.tradingSymbol,
-      strike: opts.lockedPeMeta.strike,
-      expiry: opts.lockedPeMeta.expiry,
-    };
+    atmLegCache.pe = metaFromLeg(opts.lockedPeMeta);
   }
 
   const keys = [
@@ -284,20 +422,56 @@ export async function refreshAtmBoard(
     quotes.find((x) => x.instrumentKey.includes('Nifty 50')) ??
     quotes.find((x) => x.symbol.toUpperCase().includes('NIFTY'));
   const liveSpot = niftyQ && niftyQ.lastPrice > 0 ? niftyQ.lastPrice : spot;
-  const ce = legFromQuote(atmLegCache.ce, quotes);
-  const pe = legFromQuote(atmLegCache.pe, quotes);
+  let ce = legFromQuote(atmLegCache.ce, quotes);
+  let pe = legFromQuote(atmLegCache.pe, quotes);
+
+  // Keep strike identity on the board even when Upstox omits an option LTP.
+  if (!ce) {
+    ce = opts?.lockedCeMeta
+      ? { ...opts.lockedCeMeta }
+      : {
+          instrumentKey: atmLegCache.ce.instrumentKey,
+          tradingSymbol: atmLegCache.ce.tradingSymbol,
+          strike: atmLegCache.ce.strike,
+          expiry: atmLegCache.ce.expiry,
+          ltp: 0,
+          bid: null,
+          ask: null,
+        };
+  }
+  if (!pe) {
+    pe = opts?.lockedPeMeta
+      ? { ...opts.lockedPeMeta }
+      : {
+          instrumentKey: atmLegCache.pe.instrumentKey,
+          tradingSymbol: atmLegCache.pe.tradingSymbol,
+          strike: atmLegCache.pe.strike,
+          expiry: atmLegCache.pe.expiry,
+          ltp: 0,
+          bid: null,
+          ask: null,
+        };
+  }
 
   const lockedCe = Boolean(opts?.lockedCe);
   const lockedPe = Boolean(opts?.lockedPe);
 
-  const ceNeedsShift = Boolean(ce && ce.ltp < 50 && !lockedCe);
-  const peNeedsShift = Boolean(pe && pe.ltp < 50 && !lockedPe);
+  // Study-aligned: keep strict ATM on the board — do not walk strikes when cheap.
+  const allowPremiumWalk =
+    !NEXUS_PULSE_RULES.matchRealOptionStudy && NEXUS_PULSE_RULES.minPremiumFloor > 0;
+  const ceNeedsShift = Boolean(
+    allowPremiumWalk && ce && ce.ltp > 0 && ce.ltp < NEXUS_PULSE_RULES.minPremiumFloor && !lockedCe
+  );
+  const peNeedsShift = Boolean(
+    allowPremiumWalk && pe && pe.ltp > 0 && pe.ltp < NEXUS_PULSE_RULES.minPremiumFloor && !lockedPe
+  );
 
   if (opts?.allowReselect !== false && (ceNeedsShift || peNeedsShift)) {
     const picked = await pickPinaxOptions({
       accessToken,
       spot: liveSpot,
       wantedSide: 'CE',
+      minPremiumFloor: NEXUS_PULSE_RULES.minPremiumFloor,
     });
     const nextCe = picked.candidates.find((c) => c.side === 'CE') ?? null;
     const nextPe = picked.candidates.find((c) => c.side === 'PE') ?? null;
@@ -341,12 +515,36 @@ export async function quoteNexusBoardOnly(
   const t0 = Date.now();
   const sessionDate = istDate();
   const existing = await loadNexusSession(sessionDate);
-  let hint = existing?.spot || existing?.board?.spot || 0;
-  if (hint <= 0) {
-    hint = await liveNiftySpot(accessToken, 0);
-  }
+  const live = await liveNiftySpot(accessToken, existing?.spot || existing?.board?.spot || 0);
+  const hint = live > 0 ? live : existing?.spot || existing?.board?.spot || 0;
+  const ceTrade = existing?.openTrades.find((t) => t.status === 'open' && t.side === 'CE') ?? null;
+  const peTrade = existing?.openTrades.find((t) => t.status === 'open' && t.side === 'PE') ?? null;
   const board = await refreshAtmBoard(accessToken, hint > 0 ? hint : 0, {
     fastQuotes: true,
+    lockedCe: Boolean(ceTrade),
+    lockedPe: Boolean(peTrade),
+    lockedCeMeta: ceTrade
+      ? {
+          instrumentKey: ceTrade.instrumentKey,
+          tradingSymbol: ceTrade.tradingSymbol,
+          strike: ceTrade.strike,
+          expiry: ceTrade.expiry,
+          ltp: ceTrade.markPremium ?? ceTrade.entryPremium,
+          bid: null,
+          ask: null,
+        }
+      : null,
+    lockedPeMeta: peTrade
+      ? {
+          instrumentKey: peTrade.instrumentKey,
+          tradingSymbol: peTrade.tradingSymbol,
+          strike: peTrade.strike,
+          expiry: peTrade.expiry,
+          ltp: peTrade.markPremium ?? peTrade.entryPremium,
+          bid: null,
+          ask: null,
+        }
+      : null,
   });
   if (existing && board.spot > 0) {
     await saveNexusSession({
@@ -362,12 +560,24 @@ export async function quoteNexusBoardOnly(
 export async function initNexusSession(accessToken: string): Promise<NexusPulseSession> {
   const sessionDate = istDate();
   const existing = await loadNexusSession(sessionDate);
-  if (existing) return tickNexusSession(accessToken, normalizeSession(existing));
-
-  const spot = await liveNiftySpot(accessToken, 0);
-  const session = shell(sessionDate, spot);
-  await saveNexusSession(session);
-  return tickNexusSession(accessToken, session);
+  // Fast Start: board quotes only — full candle tick runs on /tick poll.
+  const base = normalizeSession(existing ?? shell(sessionDate, 0));
+  if (!existing) {
+    await saveNexusSession(base);
+  }
+  try {
+    const { board, spot } = await quoteNexusBoardOnly(accessToken);
+    const next: NexusPulseSession = {
+      ...base,
+      spot: spot > 0 ? spot : base.spot,
+      board,
+      updatedAt: new Date().toISOString(),
+    };
+    await saveNexusSession(next);
+    return next;
+  } catch {
+    return base;
+  }
 }
 
 export async function tickNexusSession(
@@ -446,74 +656,136 @@ export async function tickNexusSession(
     if (q && q.lastPrice > 0) ltpMap.set(t.instrumentKey, q.lastPrice);
   }
 
-  const pos5m = ut5m.last?.pos ?? 0;
+  const pos5mSnap = ut5m.last?.pos ?? 0;
 
-  const bars3Edge = runUtBot(candles3m, NEXUS_UT_3M);
-  const last3Edge = bars3Edge.length ? bars3Edge[bars3Edge.length - 1] : null;
-  const prev3Edge = bars3Edge.length > 1 ? bars3Edge[bars3Edge.length - 2] : null;
-  const ut3mSellEdge = Boolean(
-    last3Edge &&
-      prev3Edge &&
-      last3Edge.t !== prev3Edge.t &&
-      last3Edge.sell &&
-      !prev3Edge.sell
-  );
-  const ut3mBuyEdge = Boolean(
-    last3Edge &&
-      prev3Edge &&
-      last3Edge.t !== prev3Edge.t &&
-      last3Edge.buy &&
-      !prev3Edge.buy
-  );
+  // Closed bars only — ignore in-progress 3m/5m (stops ~50s UT_5M flips from stale candles).
+  const bars3Study = runUtBot(candles3m, NEXUS_UT_3M);
+  const bars5Study = runUtBot(candles5m, NEXUS_UT_5M);
+  const last3Study = lastClosedBar(bars3Study, 3);
+  const last5Study = lastClosedBar(bars5Study, 5);
+  const t3 = last3Study?.t ?? null;
+  const buy3 = Boolean(last3Study?.buy);
+  const sell3 = Boolean(last3Study?.sell);
+  const pos5m = (last5Study?.pos ?? pos5mSnap) as -1 | 0 | 1;
+  let lastConsumed3mTs = session.lastConsumed3mTs ?? null;
+  let lastExitEval1mTs = session.lastExitEval1mTs ?? null;
+  const fresh3m = Boolean(t3 && t3 !== lastConsumed3mTs);
+
+  // Study decides trail/UT once per closed 1m bar (option close), not every LTP poll.
+  const closed1m = lastClosedBar(oneMin, 1);
+  const t1 = closed1m?.t ?? null;
+  const newClosed1m = Boolean(t1 && t1 !== lastExitEval1mTs);
+  const sq = shouldSquareOffAll();
+  const forceFlat = laneForceFlatAt('morning_open_stop_15');
+  const studyExitsEnabled = newClosed1m || sq || forceFlat;
+
+  // Prefer option 1m candle close as mark when doing study exits (matches PDF engine).
+  if (studyExitsEnabled && openTradesHaveKeys(session.openTrades)) {
+    await fillMarksFromOption1mClose(accessToken, ltpMap, session.openTrades);
+  }
 
   let openTrades = [...session.openTrades];
   let closedTrades = [...session.closedTrades];
 
   const { stillOpen, closed } = updateOpenTrades(openTrades, ltpMap, {
-    ut3mSellEdge,
-    ut3mBuyEdge,
-    pos5m: pos5m as -1 | 0 | 1,
-    forceFlat: laneForceFlatAt('morning_open_stop_15'),
-    squareOff: shouldSquareOffAll(),
+    ut3mSellEdge: studyExitsEnabled && fresh3m && sell3,
+    ut3mBuyEdge: studyExitsEnabled && fresh3m && buy3,
+    pos5m: studyExitsEnabled && fresh3m ? pos5m : 0,
+    forceFlat,
+    squareOff: sq,
+    studyExitsEnabled,
   });
   openTrades = stillOpen;
   closedTrades.push(...closed);
+  if (newClosed1m && t1) lastExitEval1mTs = t1;
 
-  session = { ...session, openTrades, closedTrades };
+  // Study: UT_3M exit sets last3mTs and blocks same-bar reverse.
+  if (t3 && closed.some((c) => c.exitReason === 'UT_3M')) {
+    lastConsumed3mTs = t3;
+  }
+
+  session = { ...session, openTrades, closedTrades, lastConsumed3mTs, lastExitEval1mTs };
   const guard = guardState(session);
 
-  if (!guard.blockedNewEntries && !session.autoPaused && decision.side !== 'FLAT' && decision.new3mEdge) {
+  // Re-check after UT_3M may have consumed this 3m bar (no reverse on same bar).
+  const freshForEntry = Boolean(t3 && t3 !== lastConsumed3mTs);
+
+  // Study entry only on a closed 1m bar + fresh 3m signal (exact PDF loop).
+  const wantSide: 'CE' | 'PE' | null =
+    newClosed1m && freshForEntry && buy3 && pos5m === 1
+      ? 'CE'
+      : newClosed1m && freshForEntry && sell3 && pos5m === -1
+        ? 'PE'
+        : null;
+
+  if (!guard.blockedNewEntries && !session.autoPaused && wantSide) {
     const lanesNeedingEntry = session.settings.activeLanes.filter((laneId) => {
       if (openTrades.some((t) => t.laneId === laneId && t.status === 'open')) return false;
       return laneEntryAllowed(laneId).ok;
     });
 
     if (lanesNeedingEntry.length) {
-      // One option pick for both lanes — not 2× chain/quote storm
       const { picked } = await pickPinaxOptions({
         accessToken,
         spot,
-        wantedSide: decision.side,
+        wantedSide: wantSide,
+        minPremiumFloor: NEXUS_PULSE_RULES.minPremiumFloor,
       });
-      if (picked) {
-        for (const laneId of lanesNeedingEntry) {
-          openTrades.push(
-            openNexusPaperTrade({
-              laneId,
-              side: decision.side,
-              instrumentKey: picked.instrumentKey,
-              tradingSymbol: picked.tradingSymbol,
-              strike: picked.strike,
-              expiry: picked.expiry,
-              entryPremium: picked.premium,
-              entrySpot: spot,
-              lotSize: picked.lotSize,
-            })
-          );
+      // Strict ATM: prefer closed 1m option close as entry (study tape), else LTP.
+      if (picked && picked.premium > 0) {
+        const entryMap = new Map<string, number>([[picked.instrumentKey, picked.premium]]);
+        await fillMarksFromOption1mClose(accessToken, entryMap, [
+          { instrumentKey: picked.instrumentKey },
+        ]);
+        const entryPremium = entryMap.get(picked.instrumentKey) || picked.premium;
+        if (entryPremium > 0) {
+          for (const laneId of lanesNeedingEntry) {
+            openTrades.push(
+              openNexusPaperTrade({
+                laneId,
+                side: wantSide,
+                instrumentKey: picked.instrumentKey,
+                tradingSymbol: picked.tradingSymbol,
+                strike: picked.strike,
+                expiry: picked.expiry,
+                entryPremium,
+                entrySpot: spot,
+                lotSize: picked.lotSize,
+              })
+            );
+          }
+          if (t3) lastConsumed3mTs = t3;
         }
       }
     }
   }
+
+  // Keep lastSignal UI in sync with study-style decision (not only new3mEdge).
+  const studyDecision =
+    wantSide != null
+      ? {
+          ...decision,
+          side: wantSide,
+          reason:
+            wantSide === 'CE'
+              ? 'Sector 7 A: 3m Buy + 5m long → long CE (study bar)'
+              : 'Sector 7 A: 3m Sell + 5m short → long PE (study bar)',
+          buy3m: buy3,
+          sell3m: sell3,
+          pos5m: pos5m as -1 | 0 | 1,
+          new3mEdge: freshForEntry && ((buy3 && pos5m === 1) || (sell3 && pos5m === -1)),
+        }
+      : {
+          ...decision,
+          side: 'FLAT' as const,
+          buy3m: buy3,
+          sell3m: sell3,
+          pos5m: pos5m as -1 | 0 | 1,
+          new3mEdge: false,
+          reason: !freshForEntry
+            ? 'Sector 7 A: 3m bar already consumed (study gate)'
+            : decision.reason,
+        };
 
   session = {
     ...session,
@@ -522,7 +794,9 @@ export async function tickNexusSession(
     board,
     ut3m,
     ut5m,
-    lastSignal: decision,
+    lastSignal: studyDecision,
+    lastConsumed3mTs,
+    lastExitEval1mTs,
     guard: guardState({ ...session, openTrades, closedTrades }),
     openTrades,
     closedTrades,

@@ -100,6 +100,16 @@ export type NexusPulseSession = {
   ut3m: NexusUtSnapshot | null;
   ut5m: NexusUtSnapshot | null;
   lastSignal: NexusSignalDecision | null;
+  /**
+   * Last 3m bar timestamp consumed for entry or UT_3M exit —
+   * mirrors real-option study `last3mTs` (blocks same-bar reverse).
+   */
+  lastConsumed3mTs: string | null;
+  /**
+   * Last closed **1m** index bar used for study-style trail/UT marks
+   * (real-option study only decides on each 1m bar close).
+   */
+  lastExitEval1mTs: string | null;
   settings: NexusPulseSettings;
   guard: NexusGuardState;
   openTrades: NexusPaperTrade[];

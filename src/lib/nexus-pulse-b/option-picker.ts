@@ -1,5 +1,6 @@
 /**
- * Sector 7 B Sensex option picker — same ₹50+ floor as Pinax/Nexus A, strike step 100.
+ * Sector 7 B Sensex option picker.
+ * Study-aligned mode: strict ATM. Legacy mode: ₹250–300 premium band.
  */
 
 import { fetchUpstoxQuotes, type UpstoxQuote } from '@/lib/upstox-market';
@@ -18,8 +19,12 @@ import type { PinaxOptionCandidate } from '@/lib/pinax-forge/types';
 type ContractRow = Awaited<ReturnType<typeof fetchSensexOptionContracts>>[number];
 
 const STRIKE_STEP = NEXUS_PULSE_B_RULES.strikeStep;
-const MIN_FLOOR = NEXUS_PULSE_B_RULES.minPremiumFloor;
+const BAND_LO = NEXUS_PULSE_B_RULES.premiumBandMin;
+const BAND_HI = NEXUS_PULSE_B_RULES.premiumBandMax;
+const BAND_TARGET = NEXUS_PULSE_B_RULES.premiumBandTarget;
 const DEFAULT_LOT = NEXUS_PULSE_B_RULES.sensexLotSize;
+/** How far from ATM (in strike steps) we search for the 250–300 band. */
+const BAND_SEARCH_STEPS = 30;
 
 function roundStrike(n: number) {
   return Math.round(n / STRIKE_STEP) * STRIKE_STEP;
@@ -38,7 +43,7 @@ function toCandidate(
     expiry: contract.expiry,
     lotSize: contract.lotSize || DEFAULT_LOT,
     premium: Math.round(premium * 100) / 100,
-    inPreferredBand: true,
+    inPreferredBand: premium >= BAND_LO && premium <= BAND_HI,
     isAtm,
     score: 100,
   };
@@ -77,6 +82,29 @@ function expiryKeysFromRows(rows: ContractRow[]): string[] {
         .filter((expiry) => /^\d{4}-\d{2}-\d{2}$/.test(expiry))
     ),
   ].sort();
+}
+
+/** Quote strikes near spot so we can find the ₹250–300 band without a full-chain storm. */
+function quoteKeysNearSpot(
+  rows: ContractRow[],
+  spot: number,
+  strikeStep: number,
+  maxSteps = BAND_SEARCH_STEPS
+): string[] {
+  const atm = Math.round(spot / strikeStep) * strikeStep;
+  const lo = atm - maxSteps * strikeStep;
+  const hi = atm + maxSteps * strikeStep;
+  const near = rows
+    .filter((row) => {
+      const strike = Number(row.strike_price ?? 0);
+      return Number.isFinite(strike) && strike >= lo && strike <= hi;
+    })
+    .map((row) => String(row.instrument_key || '').trim())
+    .filter(Boolean);
+  if (near.length) return [...new Set(near)];
+  const ce = pickAtmContract(rows, spot, 'CE');
+  const pe = pickAtmContract(rows, spot, 'PE');
+  return [...new Set([ce?.instrumentKey, pe?.instrumentKey].filter(Boolean) as string[])];
 }
 
 async function resolveSensexFrontWeek(
@@ -135,13 +163,37 @@ function quoteIdentity(parts: string[]): string {
   return parts.join(' ').toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
+/** Compact FO symbols: SENSEX26073077500CE → strike 77500 CE. */
+function strikeSideFromSymbol(symRaw: string): { strike: number; side: 'CE' | 'PE' } | null {
+  const sym = String(symRaw || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  const compact = sym.match(/(?:NIFTY|SENSEX|BANKNIFTY)(\d{2})(\d{2})(\d{2})(\d{3,6})(CE|PE)$/);
+  if (compact) return { strike: Number(compact[4]), side: compact[5] as 'CE' | 'PE' };
+  const spaced = String(symRaw || '')
+    .toUpperCase()
+    .match(/(\d{3,7})\s*(CE|PE)\b/);
+  if (spaced) return { strike: Number(spaced[1]), side: spaced[2] as 'CE' | 'PE' };
+  const tail = sym.match(/(\d{3,7})(CE|PE)$/);
+  if (tail) return { strike: Number(tail[1]), side: tail[2] as 'CE' | 'PE' };
+  return null;
+}
+
 function resolveOptionPremium(
   contract: NiftyOptionContract,
   quotes: UpstoxQuote[],
   greeks: UpstoxOptionGreeks[]
 ): number | null {
-  const exact = quotes.find((q) => q.instrumentKey === contract.instrumentKey);
+  const wantKey = contract.instrumentKey.replace(/:/g, '|');
+  const exact = quotes.find((q) => q.instrumentKey.replace(/:/g, '|') === wantKey);
   if (exact && exact.lastPrice > 0) return exact.lastPrice;
+
+  const byParsed = quotes.find((q) => {
+    const parsed = strikeSideFromSymbol(q.symbol) || strikeSideFromSymbol(q.instrumentKey);
+    if (!parsed) return false;
+    return parsed.strike === contract.strike && parsed.side === contract.option;
+  });
+  if (byParsed && byParsed.lastPrice > 0) return byParsed.lastPrice;
 
   const sym = quoteIdentity([contract.tradingSymbol]);
   const bySymbol = sym
@@ -149,7 +201,9 @@ function resolveOptionPremium(
     : undefined;
   if (bySymbol && bySymbol.lastPrice > 0) return bySymbol.lastPrice;
 
-  const greekExact = greeks.find((g) => g.instrumentKey === contract.instrumentKey);
+  const greekExact = greeks.find(
+    (g) => g.instrumentKey.replace(/:/g, '|') === wantKey
+  );
   if (greekExact && greekExact.lastPrice > 0) return greekExact.lastPrice;
   return null;
 }
@@ -177,34 +231,11 @@ function contractRowToContract(
   };
 }
 
-function nearestContractsForSide(opts: {
-  rows: ContractRow[];
-  side: OptionSide;
-  spot: number;
-  expiry: string;
-  sessionDate: string;
-}): NiftyOptionContract[] {
-  const preferred =
-    preferredStrikeForSide(opts.spot, opts.side, opts.expiry, opts.sessionDate) ??
-    roundStrike(opts.spot);
-  const contracts = opts.rows
-    .map((row) => contractRowToContract(row, opts.side, opts.expiry))
-    .filter((row): row is NiftyOptionContract => Boolean(row))
-    .sort((a, b) => a.strike - b.strike);
-
-  const primary =
-    opts.side === 'CE'
-      ? contracts.filter((c) => c.strike <= preferred).sort((a, b) => b.strike - a.strike)
-      : contracts.filter((c) => c.strike >= preferred).sort((a, b) => a.strike - b.strike);
-  const secondary =
-    opts.side === 'CE'
-      ? contracts.filter((c) => c.strike > preferred).sort((a, b) => a.strike - b.strike)
-      : contracts.filter((c) => c.strike < preferred).sort((a, b) => b.strike - a.strike);
-
-  return [...primary, ...secondary];
-}
-
-function chooseContractNearPremiumFloor(opts: {
+/**
+ * Pick CE or PE whose live premium is in ₹250–300, nearest ATM,
+ * then closest to band midpoint (₹275). Never walk into deep ITM junk.
+ */
+function chooseContractInPremiumBand(opts: {
   rows: ContractRow[];
   side: OptionSide;
   spot: number;
@@ -213,27 +244,100 @@ function chooseContractNearPremiumFloor(opts: {
   quotes: UpstoxQuote[];
   greeks: UpstoxOptionGreeks[];
 }): { contract: NiftyOptionContract | null; premium: number | null; isAtm: boolean } {
-  const baseStrike = preferredStrikeForSide(opts.spot, opts.side, opts.expiry, opts.sessionDate);
-  const atm = pickAtmContract(opts.rows, opts.spot, opts.side, baseStrike ?? roundStrike(opts.spot));
+  const preferred =
+    preferredStrikeForSide(opts.spot, opts.side, opts.expiry, opts.sessionDate) ??
+    roundStrike(opts.spot);
+  const atm = pickAtmContract(opts.rows, opts.spot, opts.side, preferred);
   const atmPremium = atm ? resolveOptionPremium(atm, opts.quotes, opts.greeks) : null;
-  if (atm && atmPremium && atmPremium >= MIN_FLOOR) {
+
+  if (atm && atmPremium && atmPremium >= BAND_LO && atmPremium <= BAND_HI) {
     return { contract: atm, premium: atmPremium, isAtm: true };
   }
 
-  const sideRows = nearestContractsForSide(opts);
-  for (const contract of sideRows) {
+  const lo = preferred - BAND_SEARCH_STEPS * STRIKE_STEP;
+  const hi = preferred + BAND_SEARCH_STEPS * STRIKE_STEP;
+  const sideContracts = opts.rows
+    .map((row) => contractRowToContract(row, opts.side, opts.expiry))
+    .filter((row): row is NiftyOptionContract => Boolean(row))
+    .filter((c) => c.strike >= lo && c.strike <= hi);
+
+  type Scored = {
+    contract: NiftyOptionContract;
+    premium: number;
+    strikeDist: number;
+    bandDist: number;
+  };
+  const inBand: Scored[] = [];
+  for (const contract of sideContracts) {
     const premium = resolveOptionPremium(contract, opts.quotes, opts.greeks);
-    if (!premium || premium < MIN_FLOOR) continue;
-    return { contract, premium, isAtm: false };
+    if (!premium || premium < BAND_LO || premium > BAND_HI) continue;
+    inBand.push({
+      contract,
+      premium,
+      strikeDist: Math.abs(contract.strike - preferred),
+      bandDist: Math.abs(premium - BAND_TARGET),
+    });
   }
 
-  const stepped = sideRows.find((contract) => contract.strike !== atm?.strike) ?? null;
-  if (stepped) {
-    const premium = resolveOptionPremium(stepped, opts.quotes, opts.greeks);
-    if (premium && premium > 0) {
-      return { contract: stepped, premium, isAtm: false };
+  inBand.sort((a, b) => a.strikeDist - b.strikeDist || a.bandDist - b.bandDist);
+  if (inBand.length) {
+    const best = inBand[0];
+    return {
+      contract: best.contract,
+      premium: best.premium,
+      isAtm: Boolean(atm && best.contract.strike === atm.strike),
+    };
+  }
+
+  // Soft board fallback: nearest premium to ₹275 (still reject absurd deep ITM > ₹500).
+  let soft: Scored | null = null;
+  for (const contract of sideContracts) {
+    const premium = resolveOptionPremium(contract, opts.quotes, opts.greeks);
+    if (!premium || premium <= 0 || premium > 500) continue;
+    const scored: Scored = {
+      contract,
+      premium,
+      strikeDist: Math.abs(contract.strike - preferred),
+      bandDist: Math.abs(premium - BAND_TARGET),
+    };
+    if (
+      !soft ||
+      scored.bandDist < soft.bandDist ||
+      (scored.bandDist === soft.bandDist && scored.strikeDist < soft.strikeDist)
+    ) {
+      soft = scored;
     }
   }
+  if (soft) {
+    return {
+      contract: soft.contract,
+      premium: soft.premium,
+      isAtm: Boolean(atm && soft.contract.strike === atm.strike),
+    };
+  }
+
+  return { contract: atm, premium: atmPremium, isAtm: true };
+}
+
+export function sensexPremiumInEntryBand(premium: number): boolean {
+  if (NEXUS_PULSE_B_RULES.matchRealOptionStudy) return premium > 0;
+  return premium >= BAND_LO && premium <= BAND_HI;
+}
+
+function chooseStrictAtm(opts: {
+  rows: ContractRow[];
+  side: OptionSide;
+  spot: number;
+  expiry: string;
+  sessionDate: string;
+  quotes: UpstoxQuote[];
+  greeks: UpstoxOptionGreeks[];
+}): { contract: NiftyOptionContract | null; premium: number | null; isAtm: boolean } {
+  const preferred =
+    preferredStrikeForSide(opts.spot, opts.side, opts.expiry, opts.sessionDate) ??
+    roundStrike(opts.spot);
+  const atm = pickAtmContract(opts.rows, opts.spot, opts.side, preferred);
+  const atmPremium = atm ? resolveOptionPremium(atm, opts.quotes, opts.greeks) : null;
   return { contract: atm, premium: atmPremium, isAtm: true };
 }
 
@@ -242,6 +346,8 @@ export async function pickSensexOptions(opts: {
   accessToken: string;
   spot: number;
   wantedSide: OptionSide;
+  /** Override: true = ATM only (study). Default follows NEXUS_PULSE_B_RULES.matchRealOptionStudy. */
+  strictAtm?: boolean;
 }): Promise<{
   candidates: PinaxOptionCandidate[];
   picked: PinaxOptionCandidate | null;
@@ -250,6 +356,7 @@ export async function pickSensexOptions(opts: {
   error?: string;
 }> {
   const sessionDate = istDate();
+  const strictAtm = opts.strictAtm ?? NEXUS_PULSE_B_RULES.matchRealOptionStudy;
   try {
     const resolved = await resolveSensexFrontWeek(opts.accessToken, opts.spot, sessionDate);
     if (!resolved.ce || !resolved.pe || !resolved.expiry) {
@@ -262,54 +369,57 @@ export async function pickSensexOptions(opts: {
       };
     }
 
-    const quoteKeys = [
-      ...new Set(
-        resolved.rows
-          .map((row) => String(row.instrument_key || '').trim())
-          .filter(Boolean)
-      ),
-    ];
+    const quoteSteps = strictAtm ? 6 : BAND_SEARCH_STEPS;
+    const quoteKeys = quoteKeysNearSpot(resolved.rows, opts.spot, STRIKE_STEP, quoteSteps);
     const [quotes, greeks] = await Promise.all([
       fetchUpstoxQuotes(opts.accessToken, quoteKeys),
       fetchUpstoxOptionGreeks(opts.accessToken, quoteKeys).catch(() => [] as UpstoxOptionGreeks[]),
     ]);
 
-    const cePick = chooseContractNearPremiumFloor({
+    const pickOpts = {
       rows: resolved.rows,
-      side: 'CE',
       spot: opts.spot,
       expiry: resolved.expiry,
       sessionDate,
       quotes,
       greeks,
-    });
-    const pePick = chooseContractNearPremiumFloor({
-      rows: resolved.rows,
-      side: 'PE',
-      spot: opts.spot,
-      expiry: resolved.expiry,
-      sessionDate,
-      quotes,
-      greeks,
-    });
+    };
+    const cePick = strictAtm
+      ? chooseStrictAtm({ ...pickOpts, side: 'CE' })
+      : chooseContractInPremiumBand({ ...pickOpts, side: 'CE' });
+    const pePick = strictAtm
+      ? chooseStrictAtm({ ...pickOpts, side: 'PE' })
+      : chooseContractInPremiumBand({ ...pickOpts, side: 'PE' });
 
     const candidates: PinaxOptionCandidate[] = [];
-    if (cePick.contract && cePick.premium) {
+    if (cePick.contract && cePick.premium && cePick.premium > 0) {
       candidates.push(toCandidate(cePick.contract, cePick.premium, cePick.isAtm));
+    } else if (strictAtm && cePick.contract) {
+      candidates.push(toCandidate(cePick.contract, 0, true));
     }
-    if (pePick.contract && pePick.premium) {
+    if (pePick.contract && pePick.premium && pePick.premium > 0) {
       candidates.push(toCandidate(pePick.contract, pePick.premium, pePick.isAtm));
+    } else if (strictAtm && pePick.contract) {
+      candidates.push(toCandidate(pePick.contract, 0, true));
     }
 
+    const wanted = candidates.find((c) => c.side === opts.wantedSide) ?? null;
     const picked =
-      candidates.find((c) => c.side === opts.wantedSide) ??
-      null;
+      wanted && (strictAtm ? wanted.premium > 0 : sensexPremiumInEntryBand(wanted.premium))
+        ? wanted
+        : null;
 
     return {
       candidates,
       picked,
       expiryMode: resolved.expiryMode,
       expiry: resolved.expiry,
+      error:
+        candidates.length < 2
+          ? strictAtm
+            ? 'Could not resolve Sensex ATM CE+PE'
+            : `Could not resolve Sensex CE+PE in ₹${BAND_LO}–${BAND_HI} premium band`
+          : undefined,
     };
   } catch (e) {
     return {

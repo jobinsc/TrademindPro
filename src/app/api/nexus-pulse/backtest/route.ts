@@ -18,6 +18,7 @@ export async function POST(req: NextRequest) {
       toDate?: string;
       activeLanes?: NexusLaneId[];
       mode?: 'real_options' | 'archive';
+      forceRefresh?: boolean;
     };
     const fromDate = String(body.fromDate || '').slice(0, 10);
     const toDate = String(body.toDate || '').slice(0, 10);
@@ -31,7 +32,13 @@ export async function POST(req: NextRequest) {
     const run =
       mode === 'archive'
         ? await runNexusArchiveReport({ fromDate, toDate, activeLanes })
-        : await runNexusRealOptionStudy({ accessToken: token, fromDate, toDate, activeLanes });
+        : await runNexusRealOptionStudy({
+            accessToken: token,
+            fromDate,
+            toDate,
+            activeLanes,
+            forceRefresh: Boolean(body.forceRefresh),
+          });
     return NextResponse.json({ ok: true, run, mode });
   } catch (e) {
     return NextResponse.json(

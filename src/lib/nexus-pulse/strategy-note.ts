@@ -37,7 +37,7 @@ export type NexusStrategyNoteDoc = {
 };
 
 /** Increment when `defaultStrategyNoteMarkdown()` changes materially. */
-export const NEXUS_STRATEGY_NOTE_SCHEMA = 3;
+export const NEXUS_STRATEGY_NOTE_SCHEMA = 4;
 
 function hashSecret(value: string, salt = 'nexus-note'): string {
   return createHash('sha256').update(`${salt}:${value}:trademind-nexus`).digest('hex');
@@ -71,9 +71,9 @@ It does **not** share entries/exits with PinaxForge, Blink, or ATM Lab.
 | **Gross P&amp;L** | \`(exit premium − entry premium) × 65\` |
 | **Net P&amp;L** | Gross − **₹70** |
 
-**Real-option study** (NexusPulse page) replays the PDF method: UT signals + **real Upstox ATM option 1m closes** (historical study uses **strict ATM**, no ₹50 shift).
+**Real-option study** (NexusPulse page) replays the PDF method: UT signals + **real Upstox ATM option 1m closes** (strict ATM).
 
-**Live paper** uses the **same signals and exits** as the bot, plus your **₹50 premium strike rule** (below).
+**Live paper** now uses the **same bar rules as the study**: one action per 3m timestamp (no same-bar reverse after UT_3M), **strict ATM** strikes, Lane B default (1 trade per signal). Trail still marks on live LTP (study uses 1m option closes — timing can differ slightly).
 
 ---
 
@@ -92,15 +92,12 @@ If 3m fires but 5m does not agree → **no trade**.
 
 ---
 
-## 3. Strike & premium (live paper only)
-Study/PDF uses **ATM** strike only. **Live paper** adds:
+## 3. Strike & premium (study-aligned)
+Live paper matches the study/PDF:
 
-1. Start from **ATM** (nearest 50 strike to Nifty).
-2. If **ATM premium < ₹50**, step **CE to lower strikes** / **PE to higher strikes** until premium **≥ ₹50** (when chain quotes allow).
-3. **Selected CE/PE board:** while **no open trade** on that side, if shown **LTP < ₹50**, re-select a **₹50+** contract.
-4. **While a trade is open** on CE or PE, that side’s **strike is locked** until exit; then selection can move again.
-
-What you trade is what the **Selected CE/PE** cards show at entry time.
+1. Trade **strict ATM** (nearest 50 strike to Nifty) — **no ₹50 premium walk**.
+2. **While a trade is open** on CE or PE, that side’s **strike is locked** until exit.
+3. What you trade is what the **Selected CE/PE** cards show at entry time (ATM).
 
 ---
 
@@ -123,12 +120,12 @@ Nifty **1m candles from Upstox** are resampled to 3m and 5m in-app.
 - No new entries **14:00–14:45**
 - Square-off **15:14 IST**
 
-### Lane B — \`morning_open_stop_15\` (default)
+### Lane B — \`morning_open_stop_15\` (default — study match)
 - New entries from **09:15**
 - From **15:00**: no new entries + **force flat** open Lane B trades
 - Square-off **15:14 IST**
 
-The same signal may open **one trade per active lane** (two rows if both lanes are selected).
+Keep **Lane B only** to match the study’s typical ~trade/day count. Enabling both lanes still opens **one trade per active lane** on the same signal (2× count).
 
 ---
 
@@ -137,8 +134,8 @@ There is **no** mandatory 20% premium SL on this desk (matches \`backtest_sessio
 
 Exit reasons, in practice:
 1. **Trail:** after option MFE ≥ **12** premium points, exit if open profit < **50% of MFE**.
-2. **Opposite 3m Sector 7 A** on a **new closed 3m bar** (CE on 3m Sell, PE on 3m Buy).
-3. **5m against:** CE if 5m turns short; PE if 5m turns long.
+2. **Opposite 3m Sector 7 A** on a **new 3m bar** (CE on 3m Sell, PE on 3m Buy) — that bar is then **consumed** (no reverse on the same 3m).
+3. **5m against:** CE if 5m turns short; PE if 5m turns long (only checked on a fresh 3m timestamp vs last consumed).
 4. **Lane B:** force flat from **15:00** (Lane B only).
 5. **Square-off 15:14** all lanes.
 
@@ -167,7 +164,7 @@ This note is password-gated for admin. Reset via Gmail OTP if needed.
 
 ---
 
-*Schema ${NEXUS_STRATEGY_NOTE_SCHEMA} — aligned with BOTS NexusPulse V2 + live ₹50 strike rule + ₹70 net cost.*
+*Schema ${NEXUS_STRATEGY_NOTE_SCHEMA} — live desk aligned to BOTS real-option study bar gate + strict ATM + ₹70 net cost.*
 `;
 }
 

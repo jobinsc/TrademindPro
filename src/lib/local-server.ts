@@ -77,6 +77,8 @@ export async function fetchAppPost<T>(opts: {
   token?: string | null;
   body?: object;
   retries?: number;
+  /** Abort hung Upstox-backed routes (init/tick) so the UI doesn't stick on Starting… */
+  timeoutMs?: number;
 }): Promise<T> {
   const retries = opts.retries ?? 3;
   let lastErr: Error | null = null;
@@ -91,6 +93,12 @@ export async function fetchAppPost<T>(opts: {
       }
     }
 
+    const ctrl = opts.timeoutMs && opts.timeoutMs > 0 ? new AbortController() : null;
+    const timer =
+      ctrl && opts.timeoutMs
+        ? window.setTimeout(() => ctrl.abort(), opts.timeoutMs)
+        : null;
+
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
@@ -101,6 +109,7 @@ export async function fetchAppPost<T>(opts: {
         credentials: 'include',
         body: opts.body ? JSON.stringify(opts.body) : undefined,
         cache: 'no-store',
+        signal: ctrl?.signal,
       });
 
       const data = await readJsonResponse<T>(res);
@@ -110,15 +119,22 @@ export async function fetchAppPost<T>(opts: {
       return data;
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Request failed';
+      const aborted = ctrl?.signal.aborted || msg.includes('aborted') || msg.includes('AbortError');
+      if (aborted) {
+        throw new Error(
+          `Request timed out after ${Math.round((opts.timeoutMs || 0) / 1000)}s — Upstox is slow/rate-limited. Tap Start again.`
+        );
+      }
       const network =
         e instanceof TypeError ||
         msg.includes('fetch') ||
         msg.includes('Failed to fetch') ||
-        msg.includes('NetworkError') ||
-        msg.includes('aborted');
+        msg.includes('NetworkError');
       lastErr = new Error(network ? appApiErrorMessage() : msg);
       if (!network || attempt >= retries) break;
       await new Promise((r) => window.setTimeout(r, Math.min(8000, 1500 * (attempt + 1))));
+    } finally {
+      if (timer != null) window.clearTimeout(timer);
     }
   }
 

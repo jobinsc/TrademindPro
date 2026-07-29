@@ -107,10 +107,16 @@ export function updateOpenTrades(
     pos5m?: -1 | 0 | 1;
     forceFlat?: boolean;
     squareOff?: boolean;
+    /**
+     * When false: only SQ / Lane-B time exits (and optional SL).
+     * Trail + UT wait for a new closed 1m option print — same as real-option study.
+     */
+    studyExitsEnabled?: boolean;
   }
 ): { stillOpen: NexusPaperTrade[]; closed: NexusPaperTrade[] } {
   const stillOpen: NexusPaperTrade[] = [];
   const closed: NexusPaperTrade[] = [];
+  const studyExits = opts.studyExitsEnabled !== false;
 
   for (const t of open) {
     const ltp = ltpByKey.get(t.instrumentKey);
@@ -118,7 +124,7 @@ export function updateOpenTrades(
       stillOpen.push(t);
       continue;
     }
-    let marked = applyExcursion(t, ltp);
+    let marked = studyExits ? applyExcursion(t, ltp) : { ...t, markPremium: round2(ltp) };
 
     if (opts.squareOff) {
       closed.push(closeNexusTrade(marked, ltp, 'SQ'));
@@ -130,6 +136,10 @@ export function updateOpenTrades(
     }
     if (NEXUS_PULSE_RULES.mandatoryStopLoss && ltp <= marked.stopLossPremium) {
       closed.push(closeNexusTrade(marked, Math.max(ltp, marked.stopLossPremium - 0.5), 'SL'));
+      continue;
+    }
+    if (!studyExits) {
+      stillOpen.push(marked);
       continue;
     }
     if (shouldTrailExit(marked, ltp)) {

@@ -19,6 +19,7 @@ export type UpstoxQuote = {
 
 type QuotePayload = {
   instrument_key?: string;
+  instrument_token?: string;
   symbol?: string;
   last_price?: number;
   ohlc?: { open?: number; high?: number; low?: number; close?: number };
@@ -39,24 +40,27 @@ function chunk<T>(arr: T[], size: number): T[][] {
 
 function normalizeQuote(raw: QuotePayload, fallbackKey: string): UpstoxQuote | null {
   const last = Number(raw.last_price ?? 0);
-  if (!Number.isFinite(last) || last <= 0) return null;
-  const open = Number(raw.ohlc?.open ?? last);
-  const high = Number(raw.ohlc?.high ?? last);
-  const low = Number(raw.ohlc?.low ?? last);
-  const close = Number(raw.ohlc?.close ?? last);
-  const change = Number(raw.net_change ?? last - close);
-  const changePct = close > 0 ? (change / close) * 100 : 0;
   const bestBid = Number(raw.depth?.buy?.[0]?.price ?? 0);
   const bestAsk = Number(raw.depth?.sell?.[0]?.price ?? 0);
+  const mid =
+    bestBid > 0 && bestAsk > 0 ? (bestBid + bestAsk) / 2 : bestAsk > 0 ? bestAsk : bestBid;
+  const price = Number.isFinite(last) && last > 0 ? last : mid;
+  if (!Number.isFinite(price) || price <= 0) return null;
+  const open = Number(raw.ohlc?.open ?? price);
+  const high = Number(raw.ohlc?.high ?? price);
+  const low = Number(raw.ohlc?.low ?? price);
+  const close = Number(raw.ohlc?.close ?? price);
+  const change = Number(raw.net_change ?? price - close);
+  const changePct = close > 0 ? (change / close) * 100 : 0;
   const symbol = String(raw.symbol || '')
     .replace(/^(NSE_EQ|BSE_EQ):/i, '')
     .trim()
     .toUpperCase();
 
   return {
-    instrumentKey: String(raw.instrument_key || fallbackKey),
+    instrumentKey: String(raw.instrument_key || raw.instrument_token || fallbackKey),
     symbol: symbol || fallbackKey,
-    lastPrice: last,
+    lastPrice: price,
     open,
     high,
     low,
@@ -64,7 +68,7 @@ function normalizeQuote(raw: QuotePayload, fallbackKey: string): UpstoxQuote | n
     change,
     changePct,
     volume: Number(raw.volume ?? 0),
-    averagePrice: Number(raw.average_price ?? last),
+    averagePrice: Number(raw.average_price ?? price),
     bestBid: bestBid > 0 ? bestBid : undefined,
     bestAsk: bestAsk > 0 ? bestAsk : undefined,
     spread:

@@ -3,7 +3,7 @@
  */
 
 export const NEXUS_PULSE_NAME = 'NexusPulse';
-export const NEXUS_PULSE_VERSION = 'sector-7a-v1';
+export const NEXUS_PULSE_VERSION = 'sector-7a-v3-study-1m';
 /** Display name for the signal / 5m flip exit (internal codes still UT_*). */
 export const NEXUS_SECTOR_7A_LABEL = 'Sector 7 A';
 
@@ -20,6 +20,13 @@ export const NEXUS_PULSE_RULES = {
   sideMode: 'buy_premium_only' as const,
   lotSize: 1,
   niftyLotSize: 65,
+  /**
+   * Live paper now matches the real-option study: **strict ATM** (no ₹50 strike walk).
+   * Kept at 0 so pickers keep the ATM contract even if premium is cheap.
+   */
+  minPremiumFloor: 0,
+  /** Align live desk to real-option study bar consumption / ATM rules. */
+  matchRealOptionStudy: true,
   roundTripCostInr: 70,
   sessionOpenIst: '09:15',
   sessionSquareOffIst: '15:14',
@@ -59,10 +66,10 @@ export function nexusRuleSummary(): string[] {
   return [
     `${NEXUS_PULSE_NAME} — separate agent. Does not modify Blink, ATM Lab, or PinaxForge.`,
     `Signal: ${NEXUS_SECTOR_7A_LABEL} on Nifty 3m entries + 5m direction must agree.`,
-    'Trades: buy CE/PE (ATM or ₹50+ stepped strike if ATM cheap), front-week Nifty, 1 lot.',
-    `Two paper lanes (A/B) with different session windows — see ${Object.keys(NEXUS_LANES).join(', ')}.`,
+    'Trades: buy CE/PE at **strict ATM** (same as real-option study), front-week Nifty, 1 lot.',
+    `Default lane B only (study-style); optional lane A — see ${Object.keys(NEXUS_LANES).join(', ')}.`,
     `Trail: MFE ≥ ${r.trailMfeTriggerPts} premium pts → exit if open profit < ${r.trailKeepFrac * 100}% of MFE.`,
-    `Exits: trail + opposite 3m ${NEXUS_SECTOR_7A_LABEL} (new bar) + 5m against; no premium SL; SQ 15:14.`,
+    `Exits: trail + opposite 3m ${NEXUS_SECTOR_7A_LABEL} (new 3m bar only) + 5m against; no same-bar reverse; SQ 15:14.`,
     `Cost model ₹${r.roundTripCostInr}/round trip on closed trades.`,
     'Paper only until you explicitly approve live.',
   ];

@@ -3,7 +3,7 @@
  */
 
 export const NEXUS_PULSE_B_NAME = 'NexusPulse';
-export const NEXUS_PULSE_B_VERSION = 'sector-7b-v1';
+export const NEXUS_PULSE_B_VERSION = 'sector-7b-v4-study-1m';
 export const NEXUS_SECTOR_7B_LABEL = 'Sector 7 B';
 
 /** Same UT params as Sector 7 A: Key=1, ATR=10 on 3m; ATR=14 on 5m. */
@@ -22,8 +22,17 @@ export const NEXUS_PULSE_B_RULES = {
   /** Sensex weekly FO lot. */
   sensexLotSize: 20,
   strikeStep: 100,
-  /** Same ₹50+ premium floor as Sector 7 A live paper (step ITM until ≥ ₹50). */
-  minPremiumFloor: 50,
+  /**
+   * Align live desk to Sensex real-option study: strict ATM + 3m-bar gate.
+   * (Former live rule ₹250–300 band is off while this is true.)
+   */
+  matchRealOptionStudy: true,
+  /** Legacy band (unused while matchRealOptionStudy). */
+  premiumBandMin: 250,
+  premiumBandMax: 300,
+  premiumBandTarget: 275,
+  /** @deprecated — study-aligned live uses ATM only. */
+  minPremiumFloor: 0,
   /** Spot drift (pts) before re-resolving ATM legs — ~1 Sensex strike. */
   atmReselectSpotDrift: 80,
   roundTripCostInr: 70,
@@ -60,10 +69,12 @@ export function nexusBRuleSummary(): string[] {
   return [
     `${NEXUS_PULSE_B_NAME} ${NEXUS_SECTOR_7B_LABEL} — Sensex twin of Sector 7 A. Isolated from Nifty desk / Pinax / Blink.`,
     `Signal: ${NEXUS_SECTOR_7B_LABEL} on Sensex 3m entries + 5m direction must agree (same UT as Sector 7 A).`,
-    `Trades: buy CE/PE (ATM or ₹${r.minPremiumFloor}+ stepped strike if ATM cheap), front-week Sensex, 1 lot (${r.sensexLotSize}).`,
-    `Strike step ₹${r.strikeStep}. Two paper lanes (A/B) — same windows as Sector 7 A.`,
+    r.matchRealOptionStudy
+      ? `Trades: buy CE/PE at **strict ATM** (same as Sensex real-option study), front-week Sensex, 1 lot (${r.sensexLotSize}).`
+      : `Trades: buy CE/PE with premium ₹${r.premiumBandMin}–${r.premiumBandMax} (nearest ATM in band), front-week Sensex, 1 lot (${r.sensexLotSize}).`,
+    `Strike step ₹${r.strikeStep}. Default lane B only (study-style); optional lane A.`,
     `Trail: MFE ≥ ${r.trailMfeTriggerPts} premium pts → exit if open profit < ${r.trailKeepFrac * 100}% of MFE.`,
-    `Exits: trail + opposite 3m ${NEXUS_SECTOR_7B_LABEL} (new bar) + 5m against; no premium SL; SQ 15:14.`,
+    `Exits: trail + opposite 3m ${NEXUS_SECTOR_7B_LABEL} (new 3m bar only) + 5m against; no same-bar reverse; SQ 15:14.`,
     `Cost model ₹${r.roundTripCostInr}/round trip on closed trades.`,
     'Paper only until you explicitly approve live.',
   ];

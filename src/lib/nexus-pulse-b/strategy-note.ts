@@ -37,7 +37,7 @@ export type NexusStrategyNoteDoc = {
 };
 
 /** Increment when `defaultStrategyNoteMarkdown()` changes materially. */
-export const NEXUS_STRATEGY_NOTE_SCHEMA = 1;
+export const NEXUS_STRATEGY_NOTE_SCHEMA = 2;
 
 function hashSecret(value: string, salt = 'nexus-b-note'): string {
   return createHash('sha256').update(`${salt}:${value}:trademind-nexus`).digest('hex');
@@ -71,28 +71,26 @@ It is a **separate** Sensex options **paper** desk (isolated from Sector 7 A / P
 | **Gross P&amp;L** | \`(exit premium − entry premium) × 20\` |
 | **Net P&amp;L** | Gross − **₹70** |
 
-**Real-option study** replays UT signals + **real Upstox Sensex ATM option 1m closes** (study = strict ATM, no ₹50 shift).
+**Real-option study** replays UT signals + **real Upstox Sensex ATM option 1m closes** (study = strict ATM).
 
-**Live paper** uses the **same signals and exits**, plus the **₹50 premium strike rule** (below).
+**Live paper** now uses the **same bar rules as the study**: one action per 3m timestamp (no same-bar reverse after UT_3M), **strict ATM** strikes, Lane B default (1 trade per signal). Trail still marks on live LTP (study uses 1m option closes — timing can differ slightly).
 
 ---
 
 ## 2. When we enter (must all be true)
 1. Session **Start** is running and Upstox is connected.
-2. **Only the lane(s) you selected** before start can open new trades.
+2. **Only the lane(s) you selected** before start can open new trades (keep **Lane B only** for study-like count).
 3. Time is inside that lane’s **entry window**.
-4. A **new 3m Sector 7 B edge** on the **last closed 3m bar**.
-5. **5m Sector 7 B agrees:** 3m Buy + 5m long → **CE**; 3m Sell + 5m short → **PE**.
-6. Optional **daily loss guard**.
-7. **Front-week** Sensex option resolves with a valid live premium.
+4. A **fresh 3m Sector 7 B** bar (not already consumed) with Buy/Sell + **5m agrees** → **CE** / **PE**.
+5. Optional **daily loss guard**.
+6. **Front-week** Sensex **ATM** option resolves with a valid live premium.
 
 ---
 
-## 3. Strike & premium (live paper only)
-1. Start from **ATM** (nearest **100** strike to Sensex).
-2. If **ATM premium < ₹50**, step **CE lower** / **PE higher** until premium **≥ ₹50**.
-3. While **no open trade** on that side, if LTP < ₹50, re-select ₹50+.
-4. While a trade is **open**, that side’s strike stays **locked**.
+## 3. Strike & premium (study-aligned)
+1. Trade **strict ATM** (nearest **100** strike to Sensex) — **no ₹250–300 walk**.
+2. While a trade is **open**, that side’s strike stays **locked**.
+3. What you trade is what the Selected CE/PE cards show at entry (ATM).
 
 ---
 
@@ -112,15 +110,17 @@ Sensex **1m candles from Upstox** are resampled to 3m and 5m in-app.
 ### Lane A — \`current_bans\`
 No new 09:15–09:30; no new 14:00–14:45; SQ **15:14**.
 
-### Lane B — \`morning_open_stop_15\` (default)
+### Lane B — \`morning_open_stop_15\` (default — study match)
 Entries from 09:15; from **15:00** no new + force flat; SQ **15:14**.
+
+Keep **Lane B only** to match the study. Enabling both still opens one trade per lane (2×).
 
 ---
 
 ## 6. Exits (no premium SL)
 1. **Trail:** MFE ≥ **12** pts → exit if open profit < **50% of MFE**.
-2. Opposite **3m Sector 7 B** on a new closed 3m bar.
-3. **5m against**.
+2. Opposite **3m Sector 7 B** on a **new 3m bar** — that bar is then **consumed** (no reverse on the same 3m).
+3. **5m against** (only on a fresh 3m timestamp vs last consumed).
 4. Lane B force flat from **15:00**.
 5. Square-off **15:14**.
 
@@ -128,11 +128,11 @@ Entries from 09:15; from **15:00** no new + force flat; SQ **15:14**.
 
 ## 7. Running
 1. Connect **Upstox**.
-2. Open **/app/nexus-pulse-b**, pick lane(s), **Start Sector 7 B**.
+2. Open **/app/nexus-pulse-b**, pick **Lane B only**, **Start Sector 7 B**.
 3. Keep the tab open while polling.
 4. Use **Real option study**, **Trade Archive**, and **Daily Reports** on this desk (Sensex-only storage).
 
-*Schema ${NEXUS_STRATEGY_NOTE_SCHEMA} — Sector 7 B Sensex + live ₹50 strike rule + ₹70 net cost.*
+*Schema ${NEXUS_STRATEGY_NOTE_SCHEMA} — live desk aligned to Sensex real-option study bar gate + strict ATM + ₹70 net cost.*
 `;
 }
 async function ensureDataDir() {

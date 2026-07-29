@@ -18,7 +18,7 @@ import { useAuth } from '@/components/auth/AuthProvider';
 
 const POLL_MS = NEXUS_PULSE_RULES.tickPollMsFlat;
 /** ATM Lab–style quote refresh (broker terminal feel). */
-const BOARD_POLL_MS = 1000;
+const BOARD_POLL_MS = 2500;
 
 function fmtInr(n: number | null | undefined, signed = true) {
   if (n == null || !Number.isFinite(n)) return '—';
@@ -75,6 +75,10 @@ type NexusBacktestSummary = {
   note: string;
   premiumModel?: string;
   optionFetches?: number;
+  /** Study trades listed under Closed trades after you run the study. */
+  trades?: NexusPaperTrade[];
+  fromCache?: boolean;
+  optionMisses?: number;
   byLane?: Partial<
     Record<NexusLaneId, { grossPnl: number; netPnl: number; totalTrades: number; winRate: number }>
   >;
@@ -340,7 +344,14 @@ export default function NexusPulseWorkspace() {
     setBusy('Starting…');
     setError('');
     try {
-      const data = await callApi('/api/nexus-pulse/init');
+      const t = token();
+      if (!t) throw new Error('Connect Upstox in Settings first.');
+      const data = await fetchAppPost<{ ok: boolean; session: NexusPulseSession; error?: string }>({
+        path: '/api/nexus-pulse/init',
+        token: t,
+        retries: 0,
+        timeoutMs: 45_000,
+      });
       setSession(data.session);
       if (data.session?.board) prevBoardRef.current = data.session.board;
       pollRef.current = true;
@@ -352,7 +363,7 @@ export default function NexusPulseWorkspace() {
     } finally {
       setBusy('');
     }
-  }, [callApi, scheduleTick, scheduleBoard]);
+  }, [scheduleTick, scheduleBoard]);
 
   const stopPolling = useCallback(() => {
     pollRef.current = false;
@@ -376,13 +387,17 @@ export default function NexusPulseWorkspace() {
     }
   }, [callApi, stopPolling]);
 
-  const runBacktest = useCallback(async () => {
+  const runBacktest = useCallback(async (forceRefresh = false) => {
     const t = token();
     if (!t) {
       setError('Connect Upstox in Settings first — backtest needs your session token on this phone.');
       return;
     }
-    setBacktestBusy('Real option study (Upstox)… may take a few minutes on mobile');
+    setBacktestBusy(
+      forceRefresh
+        ? 'Force refresh study (Upstox)…'
+        : 'Real option study (Upstox)… may take a few minutes on mobile'
+    );
     setError('');
     try {
       const data = await fetchAppPost<{ ok: boolean; run: NexusBacktestSummary; error?: string }>({
@@ -393,6 +408,7 @@ export default function NexusPulseWorkspace() {
           toDate: btTo,
           activeLanes: activeLanesFromMode(laneMode),
           mode: 'real_options',
+          forceRefresh,
         },
       });
       setBacktestRun(data.run);
@@ -420,10 +436,16 @@ export default function NexusPulseWorkspace() {
     () => (session?.openTrades ?? []).filter((t) => visibleLaneIds.includes(t.laneId)),
     [session, visibleLaneIds]
   );
-  const visibleClosedTrades = useMemo(
-    () => (session?.closedTrades ?? []).filter((t) => visibleLaneIds.includes(t.laneId)),
-    [session, visibleLaneIds]
-  );
+  /** After “Run real-option study”, show those study rows in the trades bar. */
+  const studyClosedTrades = useMemo(() => {
+    const list = backtestRun?.trades;
+    if (!list?.length) return null;
+    return list.filter((t) => visibleLaneIds.includes(t.laneId as NexusLaneId));
+  }, [backtestRun, visibleLaneIds]);
+  const visibleClosedTrades = useMemo(() => {
+    if (studyClosedTrades?.length) return studyClosedTrades;
+    return (session?.closedTrades ?? []).filter((t) => visibleLaneIds.includes(t.laneId));
+  }, [session, visibleLaneIds, studyClosedTrades]);
   const visibleCeTrade = useMemo(
     () => visibleOpenTrades.find((t) => t.side === 'CE') ?? null,
     [visibleOpenTrades]
@@ -660,7 +682,7 @@ export default function NexusPulseWorkspace() {
             <h2 className="text-sm font-bold text-sky-deep">Real option study (BOTS engine)</h2>
             <p className="mt-1 text-[11px] text-sky-ink/55">
               Replays NexusPulse Style A/B on Upstox Nifty 1m + real ATM option 1m closes (last ~31 days max).
-              Paper desk uses the same UT trail/exit rules; strikes use live ₹50+ rule when ATM is cheap.
+              Paper desk matches the real-option study: strict ATM, closed 3m/5m bars, entries/exits on closed 1m option prints (Lane B default).
             </p>
           </div>
           {backtestBusy ? <span className="text-[11px] text-sky-ink/50">{backtestBusy}</span> : null}
@@ -687,11 +709,20 @@ export default function NexusPulseWorkspace() {
           <button
             type="button"
             disabled={!live || Boolean(backtestBusy)}
-            onClick={() => void runBacktest()}
+            onClick={() => void runBacktest(false)}
             className="inline-flex items-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2 text-[13px] font-semibold text-sky-deep disabled:opacity-50"
           >
             {backtestBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             Run real-option study
+          </button>
+          <button
+            type="button"
+            disabled={!live || Boolean(backtestBusy)}
+            onClick={() => void runBacktest(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] font-semibold text-amber-900 disabled:opacity-50"
+            title="Re-fetch Upstox. For TODAY, numbers can still change until market close."
+          >
+            Force refresh
           </button>
         </div>
         {backtestRun ? (
@@ -721,9 +752,11 @@ export default function NexusPulseWorkspace() {
               <div className="font-semibold">{backtestRun.days}</div>
             </div>
             <p className="md:col-span-6 text-[11px] text-sky-ink/55">
+              {backtestRun.fromCache ? '🔒 Cached result — same numbers until Force refresh. ' : ''}
               {backtestRun.premiumModel ? `${backtestRun.premiumModel}. ` : ''}
               {backtestRun.note}
               {backtestRun.optionFetches != null ? ` Option candle fetches: ${backtestRun.optionFetches}.` : ''}
+              {backtestRun.optionMisses != null ? ` Misses: ${backtestRun.optionMisses}.` : ''}
             </p>
             {backtestRun.byLane && laneMode === 'both' ? (
               <div className="md:col-span-6 grid gap-2 sm:grid-cols-2">
@@ -1005,13 +1038,24 @@ export default function NexusPulseWorkspace() {
             )}
           </section>
 
-          {/* Closed trades — full table */}
+          {/* Closed / study trades — full table */}
           <section className="mt-8">
             <h2 className="text-sm font-bold text-sky-deep">
-              Closed trades ({visibleClosedTrades.length})
+              {studyClosedTrades?.length
+                ? `Study trades — backtested rules (${visibleClosedTrades.length})`
+                : `Closed trades (${visibleClosedTrades.length})`}
             </h2>
+            {studyClosedTrades?.length ? (
+              <p className="mt-1 text-[11px] text-sky-ink/55">
+                From Real option study ({backtestRun?.fromDate} → {backtestRun?.toDate}). Same ATM / UT / trail engine as the PDF backtest — not live paper fills.
+              </p>
+            ) : null}
             {closedNewestFirst.length === 0 ? (
-              <p className="mt-2 text-[13px] text-sky-ink/55">No closed trades yet for the selected lane(s).</p>
+              <p className="mt-2 text-[13px] text-sky-ink/55">
+                {backtestRun
+                  ? 'Study returned no trades for this lane/range.'
+                  : 'No closed trades yet — run Real option study to list backtested trades here, or Start for live paper.'}
+              </p>
             ) : (
               <div className="mt-3 overflow-x-auto rounded-2xl border border-sky-100 bg-white shadow-sm">
                 <table className="min-w-full text-left text-[11px]">

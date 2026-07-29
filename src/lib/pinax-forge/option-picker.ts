@@ -29,6 +29,30 @@ type ContractRow = Awaited<ReturnType<typeof fetchNiftyOptionContracts>>[number]
 
 const NEXUS_MIN_PREMIUM_FLOOR = 50;
 
+/** Quote only strikes near spot so Upstox rate-limits don't blank the ATM board. */
+function quoteKeysNearSpot(
+  rows: ContractRow[],
+  spot: number,
+  strikeStep: number,
+  maxSteps = 24
+): string[] {
+  const atm = Math.round(spot / strikeStep) * strikeStep;
+  const lo = atm - maxSteps * strikeStep;
+  const hi = atm + maxSteps * strikeStep;
+  const near = rows
+    .filter((row) => {
+      const strike = Number(row.strike_price ?? 0);
+      return Number.isFinite(strike) && strike >= lo && strike <= hi;
+    })
+    .map((row) => String(row.instrument_key || '').trim())
+    .filter(Boolean);
+  if (near.length) return [...new Set(near)];
+  // Fallback: ATM CE+PE keys only if filter somehow empty.
+  const ce = pickAtmContract(rows, spot, 'CE');
+  const pe = pickAtmContract(rows, spot, 'PE');
+  return [...new Set([ce?.instrumentKey, pe?.instrumentKey].filter(Boolean) as string[])];
+}
+
 function toCandidate(
   contract: NiftyOptionContract,
   premium: number,
@@ -238,6 +262,12 @@ function chooseContractNearPremiumFloor(opts: {
     return { contract: atm, premium: atmPremium, isAtm: true };
   }
 
+  // If ATM LTP is missing (rate-limit / partial quote batch), keep ATM —
+  // do NOT walk into deep ITM just because those strikes happened to quote.
+  if (atm && (atmPremium == null || atmPremium <= 0)) {
+    return { contract: atm, premium: null, isAtm: true };
+  }
+
   const sideRows = nearestContractsForSide({
     rows: opts.rows,
     side: opts.side,
@@ -314,6 +344,8 @@ export async function pickPinaxOptions(opts: {
   accessToken: string;
   spot: number;
   wantedSide: OptionSide;
+  /** Override premium floor; 0 = keep strict ATM (NexusPulse study align). */
+  minPremiumFloor?: number;
 }): Promise<{
   candidates: PinaxOptionCandidate[];
   picked: PinaxOptionCandidate | null;
@@ -342,20 +374,16 @@ export async function pickPinaxOptions(opts: {
     }
 
     const contracts = resolved.rows || [];
-    // Fetch quotes for ALL contracts in the resolved expiry so the
-    // `premium > 50` scan can find the first valid strike.
-    const quoteKeys = [
-      ...new Set(
-        contracts
-          .map((row) => String(row.instrument_key || '').trim())
-          .filter(Boolean)
-      ),
-    ];
+    // Quote a near-ATM window only — full-chain quote storms cause 429s and
+    // missing LTPs, which used to walk CE/PE into far ITM strikes.
+    const quoteKeys = quoteKeysNearSpot(contracts, opts.spot, 50, 24);
     const [quotes, greeks] = await Promise.all([
       fetchUpstoxQuotes(opts.accessToken, quoteKeys),
       fetchUpstoxOptionGreeks(opts.accessToken, quoteKeys).catch(() => [] as UpstoxOptionGreeks[]),
     ]);
 
+    const floorOpts =
+      opts.minPremiumFloor != null ? { minPremiumFloor: opts.minPremiumFloor } : {};
     const cePick = chooseContractNearPremiumFloor({
       rows: contracts,
       side: 'CE',
@@ -364,6 +392,7 @@ export async function pickPinaxOptions(opts: {
       sessionDate,
       quotes,
       greeks,
+      ...floorOpts,
     });
     const pePick = chooseContractNearPremiumFloor({
       rows: contracts,
@@ -373,12 +402,15 @@ export async function pickPinaxOptions(opts: {
       sessionDate,
       quotes,
       greeks,
+      ...floorOpts,
     });
 
     const candidates: PinaxOptionCandidate[] = [];
     for (const row of [cePick, pePick]) {
-      if (!row.contract || !row.premium || row.premium <= 0) continue;
-      candidates.push(toCandidate(row.contract, row.premium, row.isAtm));
+      // Seed board even when LTP is briefly missing (premium 0); entries still
+      // require a real premium via the wanted-side pick check.
+      if (!row.contract) continue;
+      candidates.push(toCandidate(row.contract, row.premium && row.premium > 0 ? row.premium : 0, row.isAtm));
     }
 
     if (!candidates.length) {
@@ -387,7 +419,7 @@ export async function pickPinaxOptions(opts: {
         picked: null,
         expiryMode: resolved.expiryMode,
         expiry: resolved.expiry,
-        error: 'Front-week contracts found but no live LTP',
+        error: 'Front-week contracts found but no CE/PE pair',
       };
     }
 

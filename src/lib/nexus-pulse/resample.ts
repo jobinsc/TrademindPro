@@ -34,3 +34,27 @@ export function resampleMinutes(candles: Candle[], minutes: number): Candle[] {
   }
   return out.sort((a, b) => a.t.localeCompare(b.t));
 }
+
+/**
+ * Last fully closed TF bar — ignore the in-progress bucket.
+ * Prevents live ticks from entering/exiting on a half-formed 3m/5m candle
+ * (stale cache → instant UT_5M flip when the next bucket appears).
+ */
+export function lastClosedBar<T extends { t: string }>(
+  bars: T[],
+  tfMinutes: number,
+  nowMs = Date.now()
+): T | null {
+  if (!bars.length) return null;
+  const last = bars[bars.length - 1];
+  const ageMs = nowMs - new Date(last.t).getTime();
+  if (
+    Number.isFinite(ageMs) &&
+    ageMs >= 0 &&
+    ageMs < tfMinutes * 60_000 - 2_000 &&
+    bars.length >= 2
+  ) {
+    return bars[bars.length - 2];
+  }
+  return last;
+}

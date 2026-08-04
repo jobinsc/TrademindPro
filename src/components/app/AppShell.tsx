@@ -7,6 +7,9 @@ import AppSystemStatus from '@/components/app/AppSystemStatus';
 import NavHistoryTracker from '@/components/app/NavHistoryTracker';
 import { ChartPeekHost } from '@/components/chart/SymbolChartLink';
 import NejoicRuntimeHost from '@/components/nejoic/NejoicRuntimeHost';
+import NexusPulseRuntimeHost from '@/components/nexus-pulse/NexusPulseRuntimeHost';
+import NexusPulseBRuntimeHost from '@/components/nexus-pulse-b/NexusPulseBRuntimeHost';
+import AtmLabRuntimeHost from '@/components/blink/AtmLabRuntimeHost';
 import { onCloudSynced, pushCloudData } from '@/lib/cloud-sync';
 import { readSidebarCollapsed, writeSidebarCollapsed } from '@/lib/sidebar-prefs';
 
@@ -56,6 +59,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <NavHistoryTracker />
       <ChartPeekHost />
       <NejoicRuntimeHost />
+      <NexusPulseRuntimeHost />
+      <NexusPulseBRuntimeHost />
+      <AtmLabRuntimeHost />
       <div className="sticky top-0 z-40 hidden h-dvh min-h-0 shrink-0 md:flex">
         <AppSidebar
           collapsed={desktopCollapsed}
@@ -90,7 +96,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           onOpenMobile={openMobile}
         />
         <AppSystemStatus />
-        <main className="min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(180deg,#eef6fb_0%,#f7fbfe_35%,#ffffff_70%)]">
+        <main className="app-main-surface min-h-0 flex-1 overflow-y-auto">
           {children}
         </main>
       </div>

@@ -11,8 +11,91 @@ import {
   PanelLeft,
 } from 'lucide-react';
 import TradePinaxLogo from '@/components/app/TradePinaxLogo';
+import DarkModeToggle from '@/components/app/DarkModeToggle';
 import { useChartPeekEnabled } from '@/hooks/useChartPeekEnabled';
+import { isUpstoxLiveSession, upstoxNeedsDailyRelogin } from '@/lib/upstox-client';
 import { cn } from '@/lib/utils';
+
+function LiveMarketBadge() {
+  const [live, setLive] = useState(false);
+  const [needsRelogin, setNeedsRelogin] = useState(false);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    function refresh() {
+      // Only a fresh daily Upstox OAuth session — not market hours, not env API keys alone,
+      // and not leftover expired/extended tokens in localStorage.
+      setLive(isUpstoxLiveSession());
+      setNeedsRelogin(upstoxNeedsDailyRelogin());
+      setReady(true);
+    }
+    refresh();
+    const id = window.setInterval(refresh, 5_000);
+    const onStorage = (e: StorageEvent) => {
+      if (
+        !e.key ||
+        e.key.includes('upstox') ||
+        e.key.includes('trademindpro_upstox')
+      ) {
+        refresh();
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', refresh);
+    };
+  }, []);
+
+  if (!ready) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/80 px-2.5 py-1 text-[11px] font-bold text-sky-ink/40 ring-1 ring-[#cfe0ee]">
+        <span className="h-2 w-2 rounded-full bg-slate-300" />
+        …
+      </span>
+    );
+  }
+
+  const title = live
+    ? 'Upstox live session active — broker API ready'
+    : needsRelogin
+      ? 'Upstox login expired — open Broker Terminal and connect again'
+      : 'Not connected to Upstox — open Broker Terminal to connect';
+
+  return (
+    <Link
+      href="/app/terminal"
+      title={title}
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-bold ring-1 transition',
+        live
+          ? 'bg-emerald-50 text-emerald-800 ring-emerald-200 hover:bg-emerald-100'
+          : 'bg-rose-50 text-rose-800 ring-rose-200 hover:bg-rose-100'
+      )}
+    >
+      <span
+        className={cn(
+          'h-2.5 w-2.5 shrink-0 rounded-full',
+          live
+            ? 'bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.25)]'
+            : 'bg-rose-500'
+        )}
+        aria-hidden
+      />
+      <span className="hidden sm:inline">{live ? 'Live market' : 'Offline'}</span>
+      <span
+        className={cn(
+          'rounded px-1 py-0.5 text-[9px] font-bold uppercase',
+          live ? 'bg-emerald-600/15 text-emerald-800' : 'bg-rose-600/15 text-rose-800'
+        )}
+      >
+        {live ? 'ON' : 'OFF'}
+      </span>
+    </Link>
+  );
+}
 
 export default function AppTopBar({
   collapsed,
@@ -46,7 +129,7 @@ export default function AppTopBar({
   });
 
   return (
-    <header className="sticky top-0 z-30 flex h-11 shrink-0 items-center justify-between gap-3 border-b border-[#c5dcec] bg-[#e3f1f9]/95 px-3 backdrop-blur-sm md:px-5">
+    <header className="sticky top-0 z-30 flex h-11 shrink-0 items-center justify-between gap-3 border-b border-sky-line/80 bg-sky-mist/95 px-3 backdrop-blur-sm md:px-5">
       <div className="flex items-center gap-2">
         <Link href="/app" aria-label="TradePinax dashboard" className="md:hidden">
           <TradePinaxLogo variant="mark" height={26} priority />
@@ -88,6 +171,8 @@ export default function AppTopBar({
       </div>
 
       <div className="flex items-center gap-2">
+        <DarkModeToggle />
+        <LiveMarketBadge />
         {peekReady && (
           <button
             type="button"

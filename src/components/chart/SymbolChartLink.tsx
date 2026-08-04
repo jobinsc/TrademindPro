@@ -38,7 +38,7 @@ export function moveChartPeek(x: number, y: number) {
   peekApi?.move(x, y);
 }
 
-export function scheduleCloseChartPeek(delayMs = 320) {
+export function scheduleCloseChartPeek(delayMs = 700) {
   if (closeTimer) window.clearTimeout(closeTimer);
   closeTimer = window.setTimeout(() => {
     peekApi?.close();
@@ -147,6 +147,8 @@ type SymbolChartLinkProps = {
   name?: string;
   className?: string;
   children?: React.ReactNode;
+  /** When false, only links to full chart (parent handles peek). Default true. */
+  hoverPeek?: boolean;
 };
 
 /**
@@ -158,17 +160,19 @@ export function SymbolChartLink({
   name,
   className = '',
   children,
+  hoverPeek = true,
 }: SymbolChartLinkProps) {
   const pathname = usePathname();
   const { enabled } = useChartPeekEnabled();
   const hoverTimer = useRef<number | null>(null);
   const opened = useRef(false);
+  const peekAllowed = hoverPeek && enabled;
 
   const href = chartHref({ symbol, exchange, name }, pathname);
 
   const onEnter = useCallback(
     (e: React.MouseEvent) => {
-      if (!enabled) return;
+      if (!peekAllowed) return;
       const x = e.clientX;
       const y = e.clientY;
       if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
@@ -181,26 +185,27 @@ export function SymbolChartLink({
           x,
           y,
         });
-      }, 400);
+      }, 150);
     },
-    [enabled, symbol, exchange, name]
+    [peekAllowed, symbol, exchange, name]
   );
 
   const onLeave = useCallback(() => {
+    if (!peekAllowed) return;
     if (hoverTimer.current) {
       window.clearTimeout(hoverTimer.current);
       hoverTimer.current = null;
     }
     opened.current = false;
     scheduleCloseChartPeek();
-  }, []);
+  }, [peekAllowed]);
 
   const onMove = useCallback(
     (e: React.MouseEvent) => {
-      if (!enabled || !opened.current) return;
+      if (!peekAllowed || !opened.current) return;
       moveChartPeek(e.clientX, e.clientY);
     },
-    [enabled]
+    [peekAllowed]
   );
 
   return (
@@ -210,7 +215,11 @@ export function SymbolChartLink({
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
       onMouseMove={onMove}
-      title={enabled ? 'Hover for mini chart · click for full chart' : 'Open chart'}
+      title={
+        peekAllowed
+          ? 'Hover for mini chart · click for full chart'
+          : 'Open full chart'
+      }
     >
       {children ?? (
         <>
@@ -220,4 +229,10 @@ export function SymbolChartLink({
       )}
     </Link>
   );
+}
+
+/** Open the shared peek host immediately (e.g. row / icon click). */
+export function openChartPeekNow(state: PeekState) {
+  cancelCloseChartPeek();
+  requestChartPeek(state);
 }

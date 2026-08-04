@@ -3,7 +3,7 @@
  */
 
 export const NEXUS_PULSE_NAME = 'NexusPulse';
-export const NEXUS_PULSE_VERSION = 'sector-7a-v3-study-1m';
+export const NEXUS_PULSE_VERSION = 'sector-7a-v8-closed-tf';
 /** Display name for the signal / 5m flip exit (internal codes still UT_*). */
 export const NEXUS_SECTOR_7A_LABEL = 'Sector 7 A';
 
@@ -70,6 +70,7 @@ export function nexusRuleSummary(): string[] {
     `Default lane B only (study-style); optional lane A — see ${Object.keys(NEXUS_LANES).join(', ')}.`,
     `Trail: MFE ≥ ${r.trailMfeTriggerPts} premium pts → exit if open profit < ${r.trailKeepFrac * 100}% of MFE.`,
     `Exits: trail + opposite 3m ${NEXUS_SECTOR_7A_LABEL} (new 3m bar only) + 5m against; no same-bar reverse; SQ 15:14.`,
+    'Live entries: same as study — today’s session bars only, first 40×1m warm-up (no 09:40 leftover signals), then 1m-close fills.',
     `Cost model ₹${r.roundTripCostInr}/round trip on closed trades.`,
     'Paper only until you explicitly approve live.',
   ];

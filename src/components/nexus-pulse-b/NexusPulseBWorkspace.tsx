@@ -13,6 +13,11 @@ import {
 } from '@/lib/nexus-pulse-b/rules';
 import type { NexusAtmBoard, NexusPaperTrade, NexusPulseSession } from '@/lib/nexus-pulse-b/types';
 import { fetchAppPost } from '@/lib/local-server';
+import {
+  isNexusDeskArmed,
+  setNexusDeskArmed,
+  setNexusDeskPageOwns,
+} from '@/lib/nexus-desk-runtime';
 import { getUpstoxAccessToken, isUpstoxConnected } from '@/lib/upstox-client';
 import { useAuth } from '@/components/auth/AuthProvider';
 
@@ -98,9 +103,16 @@ function activeLanesFromMode(mode: LaneSelectionMode): NexusLaneId[] {
   return [mode];
 }
 
-/** Live unrealized on open trade (after round-trip cost). */
-function openLivePnl(t: NexusPaperTrade) {
-  const mark = t.markPremium ?? t.entryPremium;
+/** Live unrealized on open trade (after round-trip cost). Prefer board LTP when same option. */
+function openLivePnl(t: NexusPaperTrade, board?: NexusAtmBoard | null) {
+  const key = (t.instrumentKey || '').replace(/:/g, '|');
+  const boardLtp =
+    board?.ce && board.ce.instrumentKey.replace(/:/g, '|') === key && board.ce.ltp > 0
+      ? board.ce.ltp
+      : board?.pe && board.pe.instrumentKey.replace(/:/g, '|') === key && board.pe.ltp > 0
+        ? board.pe.ltp
+        : null;
+  const mark = boardLtp ?? t.markPremium ?? t.entryPremium;
   const gross = (mark - t.entryPremium) * t.qty * t.lotSize;
   const net = gross - NEXUS_PULSE_RULES.roundTripCostInr;
   return { mark, gross, net, pts: mark - t.entryPremium };
@@ -273,15 +285,26 @@ export default function NexusPulseBWorkspace() {
       if (data.board) {
         applyBoardFlash(data.board);
         setBoardLatencyMs(data.latencyMs ?? null);
-        setSession((prev) =>
-          prev
-            ? {
-                ...prev,
-                spot: data.spot ?? data.board!.spot ?? prev.spot,
-                board: data.board!,
-              }
-            : prev
-        );
+        setSession((prev) => {
+          if (!prev) return prev;
+          const board = data.board!;
+          const paint = (t: NexusPaperTrade) => {
+            const key = (t.instrumentKey || '').replace(/:/g, '|');
+            if (board.ce?.instrumentKey.replace(/:/g, '|') === key && board.ce.ltp > 0) {
+              return { ...t, markPremium: board.ce.ltp };
+            }
+            if (board.pe?.instrumentKey.replace(/:/g, '|') === key && board.pe.ltp > 0) {
+              return { ...t, markPremium: board.pe.ltp };
+            }
+            return t;
+          };
+          return {
+            ...prev,
+            spot: data.spot ?? board.spot ?? prev.spot,
+            board,
+            openTrades: (prev.openTrades ?? []).map(paint),
+          };
+        });
       }
     } catch {
       /* keep last board; strategy tick still runs */
@@ -354,6 +377,8 @@ export default function NexusPulseBWorkspace() {
       });
       setSession(data.session);
       if (data.session?.board) prevBoardRef.current = data.session.board;
+      setNexusDeskArmed('b', true);
+      setNexusDeskPageOwns('b', true);
       pollRef.current = true;
       setPolling(true);
       scheduleTick(500);
@@ -366,13 +391,28 @@ export default function NexusPulseBWorkspace() {
   }, [scheduleTick, scheduleBoard]);
 
   const stopPolling = useCallback(() => {
+    const openN = session?.openTrades?.filter((t) => t.status === 'open').length ?? 0;
+    if (openN > 0) {
+      const ok = window.confirm(
+        `Sector 7 B has ${openN} open paper position(s). Stop pauses trail/UT management until you Start again — positions stay saved on disk. Stop anyway?`
+      );
+      if (!ok) return;
+    }
+    setNexusDeskArmed('b', false);
     pollRef.current = false;
     setPolling(false);
     if (timerRef.current) window.clearTimeout(timerRef.current);
     if (boardTimerRef.current) window.clearTimeout(boardTimerRef.current);
-  }, []);
+  }, [session?.openTrades]);
 
   const clearPaperTrades = useCallback(async () => {
+    const openN = session?.openTrades?.filter((t) => t.status === 'open').length ?? 0;
+    if (openN > 0) {
+      const ok = window.confirm(
+        `Clear will DELETE ${openN} open Sector 7 B paper position(s) and today’s closed book. This cannot be undone. Continue?`
+      );
+      if (!ok) return;
+    }
     setBusy('Clearing…');
     setError('');
     try {
@@ -385,7 +425,7 @@ export default function NexusPulseBWorkspace() {
     } finally {
       setBusy('');
     }
-  }, [callApi, stopPolling]);
+  }, [callApi, stopPolling, session?.openTrades]);
 
   const runBacktest = useCallback(async (forceRefresh = false) => {
     const t = token();
@@ -420,12 +460,47 @@ export default function NexusPulseBWorkspace() {
   }, [btFrom, btTo, laneMode]);
 
   useEffect(() => {
+    setNexusDeskPageOwns('b', true);
+    let cancelled = false;
+
+    async function hydrateAndResume() {
+      const t = getUpstoxAccessToken();
+      if (!t) return;
+      try {
+        // Init only reloads disk session + board — never wipes open paper trades.
+        const data = await fetchAppPost<{ ok: boolean; session: NexusPulseSession; error?: string }>({
+          path: '/api/nexus-pulse-b/init',
+          token: t,
+          retries: 0,
+          timeoutMs: 45_000,
+        });
+        if (cancelled) return;
+        setSession(data.session);
+        if (data.session?.board) prevBoardRef.current = data.session.board;
+        const hasOpen = (data.session?.openTrades ?? []).some((x) => x.status === 'open');
+        if (isNexusDeskArmed('b') || hasOpen) {
+          setNexusDeskArmed('b', true);
+          setNexusDeskPageOwns('b', true);
+          pollRef.current = true;
+          setPolling(true);
+          scheduleTick(400);
+          scheduleBoard(200);
+        }
+      } catch {
+        /* keep empty UI; user can Start */
+      }
+    }
+
+    void hydrateAndResume();
     return () => {
+      cancelled = true;
+      // Leave desk armed — background host continues ticks. Only Stop disarms.
+      setNexusDeskPageOwns('b', false);
       pollRef.current = false;
       if (timerRef.current) window.clearTimeout(timerRef.current);
       if (boardTimerRef.current) window.clearTimeout(boardTimerRef.current);
     };
-  }, []);
+  }, [scheduleTick, scheduleBoard]);
 
   const rules = nexusRuleSummary();
   const visibleLaneIds = useMemo<NexusLaneId[]>(
@@ -436,16 +511,16 @@ export default function NexusPulseBWorkspace() {
     () => (session?.openTrades ?? []).filter((t) => visibleLaneIds.includes(t.laneId)),
     [session, visibleLaneIds]
   );
-  /** After “Run real-option study”, show those study rows in the trades bar. */
+  /** After “Run real-option study”, show study rows separately — never hide live paper. */
   const studyClosedTrades = useMemo(() => {
     const list = backtestRun?.trades;
     if (!list?.length) return null;
     return list.filter((t) => visibleLaneIds.includes(t.laneId as NexusLaneId));
   }, [backtestRun, visibleLaneIds]);
-  const visibleClosedTrades = useMemo(() => {
-    if (studyClosedTrades?.length) return studyClosedTrades;
-    return (session?.closedTrades ?? []).filter((t) => visibleLaneIds.includes(t.laneId));
-  }, [session, visibleLaneIds, studyClosedTrades]);
+  const visibleClosedTrades = useMemo(
+    () => (session?.closedTrades ?? []).filter((t) => visibleLaneIds.includes(t.laneId)),
+    [session, visibleLaneIds]
+  );
   const visibleCeTrade = useMemo(
     () => visibleOpenTrades.find((t) => t.side === 'CE') ?? null,
     [visibleOpenTrades]
@@ -466,14 +541,15 @@ export default function NexusPulseBWorkspace() {
         openGross: 0,
       };
     }
-    const closed = visibleClosedTrades;
+    // Always live paper desk — never swap in study P&L (study has its own summary cards).
+    const closed = (session.closedTrades ?? []).filter((t) => visibleLaneIds.includes(t.laneId));
     const realizedNet = closed.reduce((s, t) => s + (t.netPnl ?? 0), 0);
     const wins = closed.filter((t) => (t.netPnl ?? 0) > 0).length;
     const losses = closed.filter((t) => (t.netPnl ?? 0) <= 0).length;
     let unrealizedNet = 0;
     let openGross = 0;
     for (const t of visibleOpenTrades) {
-      const p = openLivePnl(t);
+      const p = openLivePnl(t, session.board);
       unrealizedNet += p.net;
       openGross += p.gross;
     }
@@ -485,7 +561,7 @@ export default function NexusPulseBWorkspace() {
       losses,
       openGross,
     };
-  }, [session, visibleClosedTrades, visibleOpenTrades]);
+  }, [session, visibleLaneIds, visibleOpenTrades]);
 
   const closedNewestFirst = useMemo(() => {
     if (!visibleClosedTrades.length) return [];
@@ -493,6 +569,12 @@ export default function NexusPulseBWorkspace() {
       (b.closedAt || '').localeCompare(a.closedAt || '')
     );
   }, [visibleClosedTrades]);
+  const studyNewestFirst = useMemo(() => {
+    if (!studyClosedTrades?.length) return [];
+    return [...studyClosedTrades].sort((a, b) =>
+      (b.closedAt || '').localeCompare(a.closedAt || '')
+    );
+  }, [studyClosedTrades]);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
@@ -512,7 +594,7 @@ export default function NexusPulseBWorkspace() {
           </div>
           <p className="mt-2 max-w-2xl text-[13px] text-sky-ink/65">
             Sector 7 B · 3m entry + 5m agree · selected paper lane only by default · shows live P&amp;L and full
-            trade details. Isolated from Sector 7 A (Nifty) / PinaxForge / Blink / ATM Lab.
+            trade details. After Start, ticks keep running in the background when you switch pages (Stop to disarm).
           </p>
         </div>
         <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-800">
@@ -819,7 +901,7 @@ export default function NexusPulseBWorkspace() {
               />
               <PriceCard
                 label={`Selected ${visibleCeTrade?.strike ?? session.board?.ce?.strike ?? session.board?.atmStrike ?? '—'} CE`}
-                value={visibleCeTrade ? openLivePnl(visibleCeTrade).mark : session.board?.ce?.ltp}
+                value={visibleCeTrade ? openLivePnl(visibleCeTrade, session.board).mark : session.board?.ce?.ltp}
                 flash={flash.ce}
                 hint={
                   visibleCeTrade
@@ -836,7 +918,7 @@ export default function NexusPulseBWorkspace() {
               />
               <PriceCard
                 label={`Selected ${visiblePeTrade?.strike ?? session.board?.pe?.strike ?? session.board?.atmStrike ?? '—'} PE`}
-                value={visiblePeTrade ? openLivePnl(visiblePeTrade).mark : session.board?.pe?.ltp}
+                value={visiblePeTrade ? openLivePnl(visiblePeTrade, session.board).mark : session.board?.pe?.ltp}
                 flash={flash.pe}
                 hint={
                   visiblePeTrade
@@ -963,7 +1045,7 @@ export default function NexusPulseBWorkspace() {
             ) : (
               <div className="mt-3 space-y-3">
                 {visibleOpenTrades.map((t) => {
-                  const livePnl = openLivePnl(t);
+                  const livePnl = openLivePnl(t, session.board);
                   return (
                     <div
                       key={t.id}
@@ -1001,7 +1083,7 @@ export default function NexusPulseBWorkspace() {
                           <div className="font-semibold">₹{t.entryPremium.toFixed(2)}</div>
                         </div>
                         <div className="rounded-lg bg-slate-50 px-2 py-1.5">
-                          <div className="text-[10px] text-sky-ink/45">Mark</div>
+                          <div className="text-[10px] text-sky-ink/45">Mark (live)</div>
                           <div className="font-semibold">₹{livePnl.mark.toFixed(2)}</div>
                         </div>
                         <div className="rounded-lg bg-slate-50 px-2 py-1.5">
@@ -1038,24 +1120,16 @@ export default function NexusPulseBWorkspace() {
             )}
           </section>
 
-          {/* Closed / study trades — full table */}
+          {/* Closed live paper trades — always shown (study never hides these) */}
           <section className="mt-8">
             <h2 className="text-sm font-bold text-sky-deep">
-              {studyClosedTrades?.length
-                ? `Study trades — backtested rules (${visibleClosedTrades.length})`
-                : `Closed trades (${visibleClosedTrades.length})`}
+              Closed trades — live paper ({visibleClosedTrades.length})
             </h2>
-            {studyClosedTrades?.length ? (
-              <p className="mt-1 text-[11px] text-sky-ink/55">
-                From Real option study ({backtestRun?.fromDate} → {backtestRun?.toDate}). Same ATM / UT / trail engine as the PDF backtest — not live paper fills.
-              </p>
-            ) : null}
+            <p className="mt-1 text-[11px] text-sky-ink/55">
+              Today’s live paper fills. Study/backtest rows appear in a separate section below when you run a study.
+            </p>
             {closedNewestFirst.length === 0 ? (
-              <p className="mt-2 text-[13px] text-sky-ink/55">
-                {backtestRun
-                  ? 'Study returned no trades for this lane/range.'
-                  : 'No closed trades yet — run Real option study to list backtested trades here, or Start for live paper.'}
-              </p>
+              <p className="mt-2 text-[13px] text-sky-ink/55">No closed live paper trades yet.</p>
             ) : (
               <div className="mt-3 overflow-x-auto rounded-2xl border border-sky-100 bg-white shadow-sm">
                 <table className="min-w-full text-left text-[11px]">
@@ -1132,13 +1206,64 @@ export default function NexusPulseBWorkspace() {
             )}
           </section>
 
+          {studyNewestFirst.length > 0 ? (
+            <section className="mt-8">
+              <h2 className="text-sm font-bold text-sky-deep">
+                Study trades — backtested ({studyNewestFirst.length})
+              </h2>
+              <p className="mt-1 text-[11px] text-sky-ink/55">
+                From Real option study ({backtestRun?.fromDate} → {backtestRun?.toDate}). Not live paper fills.
+              </p>
+              <div className="mt-3 overflow-x-auto rounded-2xl border border-violet-100 bg-violet-50/20 shadow-sm">
+                <table className="min-w-full text-left text-[11px]">
+                  <thead className="border-b border-violet-100 bg-violet-50/60 text-[10px] uppercase tracking-wide text-sky-ink/50">
+                    <tr>
+                      <th className="px-3 py-2">Side</th>
+                      <th className="px-3 py-2">Strike</th>
+                      <th className="px-3 py-2">In</th>
+                      <th className="px-3 py-2">Out</th>
+                      <th className="px-3 py-2">Entry</th>
+                      <th className="px-3 py-2">Exit</th>
+                      <th className="px-3 py-2">Reason</th>
+                      <th className="px-3 py-2">Net</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {studyNewestFirst.map((t) => (
+                      <tr key={t.id} className="border-b border-slate-50 last:border-0">
+                        <td
+                          className={`px-3 py-2 font-semibold ${
+                            t.side === 'CE' ? 'text-emerald-700' : 'text-rose-700'
+                          }`}
+                        >
+                          {t.side}
+                        </td>
+                        <td className="px-3 py-2">{t.strike}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{istTime(t.openedAt)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{istTime(t.closedAt)}</td>
+                        <td className="px-3 py-2">₹{t.entryPremium.toFixed(2)}</td>
+                        <td className="px-3 py-2">
+                          {t.exitPremium != null ? `₹${t.exitPremium.toFixed(2)}` : '—'}
+                        </td>
+                        <td className="px-3 py-2">{exitReasonLabel(t.exitReason)}</td>
+                        <td className={`px-3 py-2 font-bold ${pnlClass(t.netPnl ?? 0)}`}>
+                          {fmtInr(t.netPnl)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ) : null}
+
           {/* Per-lane mini summary */}
           <section className="mt-6 grid gap-3 md:grid-cols-2">
             {visibleLaneIds.map((laneId) => {
               const open = session.openTrades.filter((t) => t.laneId === laneId);
               const closed = session.closedTrades.filter((t) => t.laneId === laneId);
               const realized = closed.reduce((s, t) => s + (t.netPnl ?? 0), 0);
-              const unreal = open.reduce((s, t) => s + openLivePnl(t).net, 0);
+              const unreal = open.reduce((s, t) => s + openLivePnl(t, session.board).net, 0);
               return (
                 <div
                   key={laneId}

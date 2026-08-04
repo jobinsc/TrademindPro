@@ -13,13 +13,19 @@ import {
   premiumAtOrBefore,
   type UpstoxOptionContractRow,
 } from '@/lib/upstox-expired-instruments';
-import { istMinutesOfDay, istDate } from '@/lib/pinax-forge/ist';
+import { istDate } from '@/lib/pinax-forge/ist';
 import { laneEntryAllowed, laneForceFlatAt, shouldSquareOffAll } from '@/lib/nexus-pulse/lanes';
 import { resampleMinutes } from '@/lib/nexus-pulse/resample';
 import { NEXUS_PULSE_RULES, type NexusLaneId } from '@/lib/nexus-pulse/rules';
 import { runUtBot } from '@/lib/nexus-pulse/ut-bot';
 import { shouldTrailExit } from '@/lib/nexus-pulse/paper-broker';
 import { loadStudyRunCache, saveStudyRunCache } from '@/lib/nexus-pulse/study-cache';
+import {
+  STUDY_1M_WARMUP_BARS,
+  lastClosedTfAtOrBefore,
+  sessionSliceCash,
+  studyWantSide,
+} from '@/lib/nexus-pulse/study-parity';
 import type { Candle } from '@/lib/nejoic';
 import type { NexusPaperTrade } from '@/lib/nexus-pulse/types';
 
@@ -73,28 +79,8 @@ function weekdays(fromDate: string, toDate: string): string[] {
   return out;
 }
 
-function sessionSlice(candles: Candle[]): Candle[] {
-  return candles
-    .filter((c) => {
-      const mins = istMinutesOfDay(c.t);
-      if (mins == null) return false;
-      return mins >= 9 * 60 + 15 && mins <= 15 * 60 + 29;
-    })
-    .sort((a, b) => a.t.localeCompare(b.t));
-}
-
 function atmStrike(spot: number): number {
   return Math.round(spot / STRIKE_STEP) * STRIKE_STEP;
-}
-
-function lastBarAtOrBefore<T extends { t: string }>(bars: T[], tsMs: number): T | null {
-  let best: T | null = null;
-  for (const b of bars) {
-    const t = new Date(b.t).getTime();
-    if (t <= tsMs) best = b;
-    else break;
-  }
-  return best;
 }
 
 class OptionTape {
@@ -226,14 +212,14 @@ async function backtestDay(
   let lastMark = 0;
   let last3mTs: string | null = null;
 
-  for (let i = 40; i < df1m.length; i++) {
+  for (let i = STUDY_1M_WARMUP_BARS; i < df1m.length; i++) {
     const bar = df1m[i];
     const barAt = new Date(bar.t);
     const tsMs = barAt.getTime();
     const spot = bar.close;
 
-    const r3 = lastBarAtOrBefore(bars3, tsMs);
-    const r5 = lastBarAtOrBefore(bars5, tsMs);
+    const r3 = lastClosedTfAtOrBefore(bars3, 3, tsMs);
+    const r5 = lastClosedTfAtOrBefore(bars5, 5, tsMs);
     if (!r3 || !r5) continue;
 
     const buy3 = r3.buy;
@@ -333,9 +319,7 @@ async function backtestDay(
     if (!laneEntryAllowed(laneId, barAt).ok) continue;
     if (t3 === last3mTs) continue;
 
-    let want: 'CE' | 'PE' | null = null;
-    if (buy3 && pos5 === 1) want = 'CE';
-    else if (sell3 && pos5 === -1) want = 'PE';
+    let want = studyWantSide({ buy3, sell3, pos5 });
     if (!want) continue;
 
     const picked = await tape.pick(day, spot, want);
@@ -458,7 +442,7 @@ export async function runNexusRealOptionStudy(opts: {
   for (const day of days) {
     let niftyDay: Candle[] = [];
     try {
-      niftyDay = sessionSlice(
+      niftyDay = sessionSliceCash(
         await fetchInstrumentDayCandles(opts.accessToken, NIFTY_UNDERLYING_KEY, day, todayIso)
       );
     } catch {
@@ -530,7 +514,7 @@ export async function replayNexusRealOptionsForDay(opts: {
   const tape = new OptionTape(opts.accessToken, todayIso);
   const lot = NEXUS_PULSE_RULES.niftyLotSize;
 
-  const niftyDay = sessionSlice(
+  const niftyDay = sessionSliceCash(
     await fetchInstrumentDayCandles(opts.accessToken, NIFTY_UNDERLYING_KEY, date, todayIso)
   );
   if (niftyDay.length < 80) {

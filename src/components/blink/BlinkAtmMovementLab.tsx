@@ -26,6 +26,12 @@ import {
   type AtmBlinkBrief,
 } from '@/lib/blink-atm-blink-brief';
 import { splitTodayCandles } from '@/lib/blink-atm-trader-context';
+import {
+  isAtmLabArmed,
+  setAtmLabArmed,
+  setAtmLabPageOwns,
+  writeAtmLabRuntimeSession,
+} from '@/lib/atm-lab-runtime';
 
 type ApiResult = {
   ok: boolean;
@@ -315,6 +321,7 @@ export function BlinkAtmMovementLab() {
     if (observationCutoffReached(new Date().toISOString())) {
       runningRef.current = false;
       setRunning(false);
+      setAtmLabArmed(false);
       await flushSamples('session-cutoff');
       snapshotBackup();
       setLink('closed', 'ATM LAB CLOSED — 15:15 IST cutoff. All queued samples flushed.');
@@ -428,6 +435,14 @@ export function BlinkAtmMovementLab() {
       setLevels(frozenLevels);
       setEvents(restoredEvents);
       setLastBeatAt(data.sample.at);
+      writeAtmLabRuntimeSession({
+        date: data.date,
+        keys: data.keys,
+        strike: data.contracts.ce.strike,
+        runId: data.sample.runId,
+      });
+      setAtmLabArmed(true);
+      setAtmLabPageOwns(true);
       runningRef.current = true;
       setRunning(true);
       snapshotBackup();
@@ -455,6 +470,7 @@ export function BlinkAtmMovementLab() {
   async function stop() {
     runningRef.current = false;
     setRunning(false);
+    setAtmLabArmed(false);
     if (timerRef.current != null) window.clearTimeout(timerRef.current);
     timerRef.current = null;
     setLink('closed', 'ATM LAB CLOSING — flushing and saving all results…');
@@ -470,11 +486,18 @@ export function BlinkAtmMovementLab() {
     );
   }
 
+  const startRef = useRef(start);
+  startRef.current = start;
+
   useEffect(() => {
     if (typeof window !== 'undefined' && 'Notification' in window) {
       if (Notification.permission === 'default') {
         void Notification.requestPermission();
       }
+    }
+    setAtmLabPageOwns(true);
+    if (isAtmLabArmed() && getUpstoxAccessToken() && !runningRef.current) {
+      void startRef.current();
     }
     const onHide = () => {
       if (!runningRef.current) return;
@@ -489,6 +512,8 @@ export function BlinkAtmMovementLab() {
     return () => {
       document.removeEventListener('visibilitychange', onHide);
       window.removeEventListener('beforeunload', onUnload);
+      // Leave armed — AtmLabRuntimeHost continues sample/save. Only Stop / 15:15 disarms.
+      setAtmLabPageOwns(false);
       runningRef.current = false;
       if (timerRef.current != null) window.clearTimeout(timerRef.current);
       snapshotBackup();
@@ -509,6 +534,7 @@ export function BlinkAtmMovementLab() {
           </div>
           <p className="mt-1 text-[12px] text-sky-ink/55">
             One-second Nifty + ATM CE/PE watch · Blink decides STALK/PREPARE before the move.
+            After Start, capture keeps running in the background when you switch pages (Stop or 15:15 IST to disarm).
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

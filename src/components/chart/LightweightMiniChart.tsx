@@ -21,7 +21,62 @@ type Props = {
   className?: string;
 };
 
-/** Local mini candlestick chart (Yahoo data) — reliable for NSE/BSE peeks */
+const PEEK_DAYS = 3;
+
+function istDateKey(unixSec: number): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(unixSec * 1000));
+}
+
+/** Keep only the last N IST calendar days present in the series. */
+function trimToLastDays(bars: CandlestickData[], days: number): CandlestickData[] {
+  if (!bars.length || days <= 0) return bars;
+  const keysInOrder: string[] = [];
+  const seen = new Set<string>();
+  for (let i = bars.length - 1; i >= 0; i--) {
+    const key = istDateKey(Number(bars[i].time));
+    if (!seen.has(key)) {
+      seen.add(key);
+      keysInOrder.push(key);
+      if (keysInOrder.length >= days) break;
+    }
+  }
+  const keep = new Set(keysInOrder);
+  return bars.filter((b) => keep.has(istDateKey(Number(b.time))));
+}
+
+function dayBoundaryTimes(bars: CandlestickData[]): Time[] {
+  const out: Time[] = [];
+  let prevKey: string | null = null;
+  let prevT: number | null = null;
+  for (const b of bars) {
+    const t = Number(b.time);
+    if (!Number.isFinite(t)) continue;
+    const key = istDateKey(t);
+    const gapHrs = prevT != null ? (t - prevT) / 3600 : 0;
+    if ((prevKey != null && key !== prevKey) || gapHrs >= 6) out.push(b.time);
+    prevKey = key;
+    prevT = t;
+  }
+  return out;
+}
+
+function buildDayXs(chart: IChartApi, times: Time[]): number[] {
+  const ts = chart.timeScale();
+  const xs: number[] = [];
+  for (const t of times) {
+    const x = ts.timeToCoordinate(t);
+    if (x == null || !Number.isFinite(x) || x < -2 || x > 10_000) continue;
+    xs.push(x);
+  }
+  return xs;
+}
+
+/** Peek chart: last 3 days only, thin day separators (no labels). */
 export default function LightweightMiniChart({
   symbol,
   exchange = 'NSE',
@@ -33,9 +88,12 @@ export default function LightweightMiniChart({
   const wrapRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const dayStartsRef = useRef<Time[]>([]);
+  const syncRef = useRef<() => void>(() => {});
   const [status, setStatus] = useState<'loading' | 'ok' | 'error'>('loading');
   const [spot, setSpot] = useState<number | null>(null);
   const [err, setErr] = useState('');
+  const [dayXs, setDayXs] = useState<number[]>([]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -54,7 +112,12 @@ export default function LightweightMiniChart({
         horzLines: { color: '#eef5fa' },
       },
       rightPriceScale: { borderColor: '#d5e6f0' },
-      timeScale: { borderColor: '#d5e6f0', timeVisible: true, secondsVisible: false },
+      timeScale: {
+        borderColor: '#d5e6f0',
+        timeVisible: true,
+        secondsVisible: false,
+        rightOffset: 2,
+      },
       crosshair: { mode: 0 },
     });
     const series = chart.addCandlestickSeries({
@@ -67,9 +130,17 @@ export default function LightweightMiniChart({
     chartRef.current = chart;
     seriesRef.current = series;
 
+    const syncDayLines = () => {
+      if (!chartRef.current) return;
+      setDayXs(buildDayXs(chartRef.current, dayStartsRef.current));
+    };
+    syncRef.current = syncDayLines;
+    chart.timeScale().subscribeVisibleLogicalRangeChange(syncDayLines);
+
     const ro = new ResizeObserver(() => {
       if (!wrapRef.current) return;
       chart.applyOptions({ width: wrapRef.current.clientWidth });
+      syncDayLines();
     });
     ro.observe(el);
 
@@ -78,6 +149,8 @@ export default function LightweightMiniChart({
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      dayStartsRef.current = [];
+      syncRef.current = () => {};
     };
   }, [width, height]);
 
@@ -85,6 +158,7 @@ export default function LightweightMiniChart({
     let cancelled = false;
     setStatus('loading');
     setErr('');
+    setDayXs([]);
 
     async function load() {
       try {
@@ -92,7 +166,8 @@ export default function LightweightMiniChart({
           symbol,
           exchange,
           interval,
-          limit: '80',
+          // Fetch enough raw bars, then trim to 3 IST days client-side
+          limit: interval === '1d' ? '10' : '400',
         });
         const res = await fetch(`/api/market/candles?${params}`);
         const data = (await res.json()) as {
@@ -107,16 +182,31 @@ export default function LightweightMiniChart({
           setErr(data.error || 'No data');
           return;
         }
-        const bars: CandlestickData[] = data.candles.map((c) => ({
+        const all: CandlestickData[] = data.candles.map((c) => ({
           time: Math.floor(new Date(c.t).getTime() / 1000) as Time,
           open: c.open,
           high: c.high,
           low: c.low,
           close: c.close,
         }));
+        const bars =
+          interval === '1d' ? all.slice(-PEEK_DAYS) : trimToLastDays(all, PEEK_DAYS);
+
+        dayStartsRef.current = dayBoundaryTimes(bars);
         seriesRef.current?.setData(bars);
+        seriesRef.current?.setMarkers([]); // no date labels / markers
         chartRef.current?.timeScale().fitContent();
-        setSpot(data.spot ?? null);
+
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (!cancelled) syncRef.current();
+          });
+        });
+        window.setTimeout(() => {
+          if (!cancelled) syncRef.current();
+        }, 80);
+
+        setSpot(data.spot ?? bars[bars.length - 1]?.close ?? null);
         setStatus('ok');
       } catch (e) {
         if (!cancelled) {
@@ -136,7 +226,7 @@ export default function LightweightMiniChart({
     <div className={`bg-white ${className}`} style={{ width, height }}>
       <div className="flex items-center justify-between px-2.5 py-1 text-[10px] text-sky-ink/50">
         <span>
-          {symbol} · {interval}
+          {symbol} · {interval} · 3d
         </span>
         <span className="font-semibold tabular-nums text-sky-ink">
           {status === 'loading' && '…'}
@@ -144,7 +234,16 @@ export default function LightweightMiniChart({
           {status === 'error' && '—'}
         </span>
       </div>
-      <div ref={wrapRef} className="w-full" style={{ height: height - 28 }} />
+      <div className="relative w-full overflow-hidden" style={{ height: height - 28 }}>
+        <div ref={wrapRef} className="h-full w-full" />
+        {dayXs.map((x) => (
+          <div
+            key={Math.round(x * 10)}
+            className="pointer-events-none absolute inset-y-0 z-[2] w-px bg-slate-400/45"
+            style={{ left: x }}
+          />
+        ))}
+      </div>
       {status === 'error' && (
         <p className="px-2 pb-1 text-[10px] text-rose-500">{err || 'Chart unavailable'}</p>
       )}

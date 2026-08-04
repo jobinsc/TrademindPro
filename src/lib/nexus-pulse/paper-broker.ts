@@ -68,6 +68,12 @@ function applyExcursion(trade: NexusPaperTrade, mark: number): NexusPaperTrade {
   };
 }
 
+/** Live LTP for UI / unrealized only — does NOT move MFE/high/low (study trail stays on 1m closes). */
+export function paintDisplayMark(trade: NexusPaperTrade, ltp: number): NexusPaperTrade {
+  if (!(ltp > 0)) return trade;
+  return { ...trade, markPremium: round2(ltp) };
+}
+
 /** Trail giveback per Nexus handoff (premium pts on option). */
 export function shouldTrailExit(trade: NexusPaperTrade, mark: number): boolean {
   const mfe = trade.maxFavorablePts;

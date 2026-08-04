@@ -246,8 +246,8 @@ function NavLink({
         'relative flex items-center gap-2.5 rounded-xl py-2 text-[13px] font-semibold transition',
         collapsed ? 'justify-center px-2' : nested ? 'px-3 pl-9' : 'px-3',
         active
-          ? 'bg-white text-sky-deep shadow-[inset_3px_0_0_0_#1a6ba8]'
-          : 'text-sky-ink/80 hover:bg-white/70 hover:text-sky-ink'
+          ? 'bg-[var(--nav-active-bg)] text-sky-deep shadow-[inset_3px_0_0_0_#1a6ba8] dark:shadow-[inset_3px_0_0_0_#5eb3e8]'
+          : 'text-sky-ink/80 hover:bg-[var(--nav-hover-bg)] hover:text-sky-ink'
       )}
     >
       <Icon className={cn('shrink-0', nested ? 'h-3.5 w-3.5' : 'h-4 w-4')} strokeWidth={2} />
@@ -374,14 +374,14 @@ export default function AppSidebar({
   return (
     <aside
       className={cn(
-        'flex h-dvh min-h-0 min-w-[72px] shrink-0 flex-col border-r border-[#c5dcec] transition-[width] duration-200',
-        'bg-[linear-gradient(180deg,#eaf6fc_0%,#f5fbfe_48%,#e8f4fb_100%)]',
+        'flex h-dvh min-h-0 min-w-[72px] shrink-0 flex-col border-r border-[var(--sidebar-border)] transition-[width] duration-200',
         collapsed ? 'w-[72px]' : 'w-[250px]',
         variant === 'mobile' && 'w-[280px] max-w-[85vw]'
       )}
+      style={{ backgroundImage: 'var(--sidebar-bg)' }}
     >
       {/* Brand */}
-      <div className="shrink-0 border-b border-[#d5e6f0] bg-white px-3 py-3">
+      <div className="shrink-0 border-b border-[var(--sidebar-border)] bg-[var(--sidebar-header)] px-3 py-3">
         <div
           className={cn(
             'flex items-center',
@@ -415,7 +415,7 @@ export default function AppSidebar({
                     : 'Collapse sidebar'
               }
               className={cn(
-                'shrink-0 rounded-lg p-1.5 text-[#0369A1] transition hover:bg-[#eef6fb]',
+                'shrink-0 rounded-lg p-1.5 text-sky-deep transition hover:bg-[var(--nav-hover-bg)]',
                 collapsed && 'mx-auto'
               )}
             >
@@ -432,13 +432,13 @@ export default function AppSidebar({
       </div>
 
       {!collapsed && (
-        <div className="mx-3 mt-3 rounded-xl bg-white px-3 py-2.5 shadow-sm ring-1 ring-[#cfe0ee]">
+        <div className="mx-3 mt-3 rounded-xl bg-[var(--surface)] px-3 py-2.5 shadow-sm ring-1 ring-[var(--sidebar-border)]">
           <div className="flex items-center justify-between gap-2">
             <p className="truncate text-[13px] font-semibold text-sky-ink">
               {user?.name || 'Trader'}
             </p>
             {isAdmin && (
-              <span className="shrink-0 rounded-md bg-sky-deep/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-sky-deep">
+              <span className="shrink-0 rounded-md bg-sky-deep/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-sky-deep">
                 Admin
               </span>
             )}
@@ -455,7 +455,7 @@ export default function AppSidebar({
                 type="button"
                 onClick={() => toggleGroup(group.title)}
                 aria-expanded={openGroups[group.title] !== false}
-                className="mb-1 flex w-full items-center justify-between rounded-lg px-3 py-1 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-ink/50 transition hover:bg-white/60"
+                className="mb-1 flex w-full items-center justify-between rounded-lg px-3 py-1 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-ink/55 transition hover:bg-[var(--nav-hover-bg)]"
               >
                 <span>{group.title}</span>
                 {openGroups[group.title] === false ? (
@@ -489,7 +489,7 @@ export default function AppSidebar({
                           aria-label={expanded ? `Collapse ${item.label}` : `Expand ${item.label}`}
                           aria-expanded={expanded}
                           onClick={() => toggleMenu(item.href)}
-                          className="mr-1 rounded-lg p-1.5 text-sky-ink/50 transition hover:bg-white hover:text-sky-ink"
+                          className="mr-1 rounded-lg p-1.5 text-sky-ink/50 transition hover:bg-[var(--nav-hover-bg)] hover:text-sky-ink"
                         >
                           <ChevronRight
                             className={cn(
@@ -502,7 +502,7 @@ export default function AppSidebar({
                       )}
                     </div>
                     {hasChildren && expanded && (
-                      <div className="mt-0.5 ml-5 space-y-0.5 border-l border-[#b9d7ea]">
+                      <div className="mt-0.5 ml-5 space-y-0.5 border-l border-[var(--sidebar-border)]">
                         {item.children!.map((child) => (
                           <NavLink
                             key={child.href}
@@ -525,7 +525,7 @@ export default function AppSidebar({
         ))}
       </nav>
 
-      <div className="shrink-0 space-y-0.5 border-t border-[#c5dcec]/80 px-2 py-3">
+      <div className="shrink-0 space-y-0.5 border-t border-[var(--sidebar-border)] px-2 py-3">
         <NavLink
           href="/app/settings"
           label="Settings & Brokers"
@@ -539,7 +539,7 @@ export default function AppSidebar({
           onClick={handleLogout}
           title="Log out"
           className={cn(
-            'flex w-full items-center gap-2.5 rounded-xl py-2 text-[13px] font-semibold text-sky-ink/75 transition hover:bg-rose-50 hover:text-rose-600',
+            'flex w-full items-center gap-2.5 rounded-xl py-2 text-[13px] font-semibold text-sky-ink/75 transition hover:bg-rose-500/15 hover:text-rose-400',
             collapsed ? 'justify-center px-2' : 'px-3'
           )}
         >

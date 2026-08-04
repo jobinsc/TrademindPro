@@ -14,6 +14,70 @@
   --panel: #eaf6fc;
   --panel-mid: #f5fbfe;
   --panel-soft: #e8f4fb;
+
+  --sky-soft: #f0f7fc;
+  --sky-mist: #e3f1fa;
+  --sky-light: #d0e8f6;
+  --sky-card: #ffffff;
+  --sky-line: #9bc7e3;
+  --sky-mid: #2e86c5;
+  --sky-deep: #1565a0;
+  --sky-panel: #eaf6fc;
+  --sky-panel-mid: #f5fbfe;
+  --sky-panel-soft: #e8f4fb;
+  --sky-ink: #0a0a0a;
+  --sky-50: #f0f7fc;
+  --sky-100: #e3f1fa;
+  --sky-200: #cfe0ee;
+
+  --app-main-gradient: linear-gradient(180deg, #eef6fb 0%, #f7fbfe 35%, #ffffff 70%);
+  --surface: #ffffff;
+  --surface-muted: #f8fafc;
+  --sidebar-bg: linear-gradient(180deg, #eaf6fc 0%, #f5fbfe 48%, #e8f4fb 100%);
+  --sidebar-header: #ffffff;
+  --sidebar-border: #c5dcec;
+  --nav-active-bg: #ffffff;
+  --nav-hover-bg: rgba(255, 255, 255, 0.7);
+}
+
+html.dark {
+  color-scheme: dark;
+  /* Professional slate-blue — not near-black */
+  --bg: #1a2332;
+  --bg-soft: #222d3d;
+  --bg-mist: #243044;
+  --accent: #5eb3e8;
+  --accent-mid: #7ec4e8;
+  --ink: #e8eef4;
+  --ink-muted: #c5d0db;
+  --line: #3d4f63;
+  --panel: #243044;
+  --panel-mid: #2a384c;
+  --panel-soft: #2c3a4f;
+
+  --sky-soft: #1a2332;
+  --sky-mist: #222d3d;
+  --sky-light: #2a384c;
+  --sky-card: #2a384c;
+  --sky-line: #3d4f63;
+  --sky-mid: #5eb3e8;
+  --sky-deep: #8ec8eb;
+  --sky-panel: #222d3d;
+  --sky-panel-mid: #2a384c;
+  --sky-panel-soft: #2c3a4f;
+  --sky-ink: #e8eef4;
+  --sky-50: #222d3d;
+  --sky-100: #2a384c;
+  --sky-200: #3d4f63;
+
+  --app-main-gradient: linear-gradient(180deg, #1a2332 0%, #1e2a3a 45%, #222d3d 100%);
+  --surface: #2a384c;
+  --surface-muted: #243044;
+  --sidebar-bg: linear-gradient(180deg, #222d3d 0%, #1e2a3a 50%, #243044 100%);
+  --sidebar-header: #2a384c;
+  --sidebar-border: #3d4f63;
+  --nav-active-bg: #334155;
+  --nav-hover-bg: rgba(255, 255, 255, 0.06);
 }
 
 * {
@@ -49,6 +113,11 @@ h4,
   color: var(--ink);
 }
 
+html.dark ::selection {
+  background: #0369a1;
+  color: #e2e8f0;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
 }
@@ -62,8 +131,49 @@ h4,
   border-radius: 8px;
 }
 
+html.dark ::-webkit-scrollbar-thumb {
+  background: #475569;
+}
+
 ::-webkit-scrollbar-thumb:hover {
   background: var(--accent-mid);
+}
+
+/* Full-site dark surfaces — covers hardcoded bg-white / light panels across pages */
+html.dark .bg-white,
+html.dark .bg-white\/95,
+html.dark .bg-white\/90,
+html.dark .bg-white\/80 {
+  background-color: var(--surface) !important;
+}
+
+html.dark .bg-slate-50,
+html.dark .bg-slate-50\/60,
+html.dark .bg-slate-50\/80 {
+  background-color: var(--surface-muted) !important;
+}
+
+html.dark .border-slate-50,
+html.dark .border-slate-100,
+html.dark .border-\[\#cfe0ee\],
+html.dark .border-\[\#e8f2fa\],
+html.dark .ring-\[\#cfe0ee\] {
+  border-color: var(--sky-line) !important;
+  --tw-ring-color: var(--sky-line);
+}
+
+html.dark .bg-\[\#e3f1f9\]\/95,
+html.dark .bg-\[\#eef6fb\] {
+  background-color: var(--sky-soft) !important;
+}
+
+html.dark .shadow-sm,
+html.dark .shadow-xl {
+  --tw-shadow-color: rgb(0 0 0 / 0.45);
+}
+
+.app-main-surface {
+  background: var(--app-main-gradient);
 }
 
 @keyframes fadeUp {

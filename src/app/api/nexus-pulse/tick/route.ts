@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { tickNexusSession } from '@/lib/nexus-pulse/session-engine';
+import { rememberUpstoxBearer } from '@/lib/upstox-last-bearer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,6 +10,7 @@ export async function POST(req: NextRequest) {
   if (!token) {
     return NextResponse.json({ ok: false, error: 'Reconnect Upstox' }, { status: 401 });
   }
+  rememberUpstoxBearer(token);
   try {
     const session = await tickNexusSession(token);
     return NextResponse.json({

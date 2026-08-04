@@ -3,7 +3,7 @@
  */
 
 export const NEXUS_PULSE_B_NAME = 'NexusPulse';
-export const NEXUS_PULSE_B_VERSION = 'sector-7b-v4-study-1m';
+export const NEXUS_PULSE_B_VERSION = 'sector-7b-v8-closed-tf';
 export const NEXUS_SECTOR_7B_LABEL = 'Sector 7 B';
 
 /** Same UT params as Sector 7 A: Key=1, ATR=10 on 3m; ATR=14 on 5m. */
@@ -39,6 +39,7 @@ export const NEXUS_PULSE_B_RULES = {
   sessionOpenIst: '09:15',
   sessionSquareOffIst: '15:14',
   laneBStopNewIst: '15:00',
+  /** Same trail as real-option study — arm at 12 pts MFE, keep 50%. */
   trailMfeTriggerPts: 12,
   trailKeepFrac: 0.5,
   mandatoryStopLoss: false,
@@ -75,6 +76,7 @@ export function nexusBRuleSummary(): string[] {
     `Strike step ₹${r.strikeStep}. Default lane B only (study-style); optional lane A.`,
     `Trail: MFE ≥ ${r.trailMfeTriggerPts} premium pts → exit if open profit < ${r.trailKeepFrac * 100}% of MFE.`,
     `Exits: trail + opposite 3m ${NEXUS_SECTOR_7B_LABEL} (new 3m bar only) + 5m against; no same-bar reverse; SQ 15:14.`,
+    'Live entries: same as study — today’s session bars only, first 40×1m warm-up, then 1m-close fills.',
     `Cost model ₹${r.roundTripCostInr}/round trip on closed trades.`,
     'Paper only until you explicitly approve live.',
   ];

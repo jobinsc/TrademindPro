@@ -73,7 +73,7 @@ It does **not** share entries/exits with PinaxForge, Blink, or ATM Lab.
 
 **Real-option study** (NexusPulse page) replays the PDF method: UT signals + **real Upstox ATM option 1m closes** (strict ATM).
 
-**Live paper** now uses the **same bar rules as the study**: one action per 3m timestamp (no same-bar reverse after UT_3M), **strict ATM** strikes, Lane B default (1 trade per signal). Trail still marks on live LTP (study uses 1m option closes — timing can differ slightly).
+**Live paper** uses the **same bar rules as the study**: today’s session candles only, **first 40×1m warm-up** (no early leftover signals like 09:40 vs study 10:12), one action per 3m timestamp, **strict ATM**, Lane B default, and **entry/exit marks from closed option 1m closes only** (live LTP only for forced SQ / 15:00 flat).
 
 ---
 

@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
+  darkMode: 'class',
   content: [
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
@@ -10,18 +11,22 @@ module.exports = {
       colors: {
         sky: {
           // Keep main app mostly as-today; ink is thick black for reading
-          soft: '#F0F7FC',
-          mist: '#E3F1FA',
-          light: '#D0E8F6',
-          card: '#FFFFFF',
-          line: '#9BC7E3',
-          mid: '#2E86C5',
-          deep: '#1565A0',
-          // Soft pleasing side panel blues
-          panel: '#EAF6FC',
-          panelMid: '#F5FBFE',
-          panelSoft: '#E8F4FB',
-          ink: '#0A0A0A',
+          // Values come from CSS vars so dark mode can remaps the whole site.
+          soft: 'var(--sky-soft)',
+          mist: 'var(--sky-mist)',
+          light: 'var(--sky-light)',
+          card: 'var(--sky-card)',
+          line: 'var(--sky-line)',
+          mid: 'var(--sky-mid)',
+          deep: 'var(--sky-deep)',
+          panel: 'var(--sky-panel)',
+          panelMid: 'var(--sky-panel-mid)',
+          panelSoft: 'var(--sky-panel-soft)',
+          ink: 'var(--sky-ink)',
+          // Common Tailwind-scale aliases used across the app
+          50: 'var(--sky-50)',
+          100: 'var(--sky-100)',
+          200: 'var(--sky-200)',
         },
       },
       fontFamily: {

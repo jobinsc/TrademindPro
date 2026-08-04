@@ -121,6 +121,58 @@ function paneIdFor(ind: IndMeta) {
   return ind.overlay ? 'candle_pane' : `pane_${ind.id}`;
 }
 
+const DAY_SEP_GROUP = 'day-separators';
+
+function istDateKeyMs(ms: number): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(ms));
+}
+
+/** Thin vertical day breaks only — no labels / annotations. */
+function applyDaySeparators(chart: Chart, list: KLineData[]) {
+  try {
+    chart.removeOverlay({ groupId: DAY_SEP_GROUP });
+  } catch {
+    /* ignore */
+  }
+  if (!list.length) return;
+
+  let prevKey: string | null = null;
+  let prevTs: number | null = null;
+  for (const c of list) {
+    const key = istDateKeyMs(c.timestamp);
+    const gapHrs = prevTs != null ? (c.timestamp - prevTs) / 3_600_000 : 0;
+    const newDay = (prevKey != null && key !== prevKey) || gapHrs >= 6;
+    if (newDay) {
+      try {
+        chart.createOverlay({
+          name: 'verticalStraightLine',
+          id: `day-sep-${c.timestamp}`,
+          groupId: DAY_SEP_GROUP,
+          lock: true,
+          visible: true,
+          zLevel: -1,
+          points: [{ timestamp: c.timestamp }],
+          styles: {
+            line: {
+              color: 'rgba(100, 116, 139, 0.45)',
+              size: 1,
+            },
+          },
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+    prevKey = key;
+    prevTs = c.timestamp;
+  }
+}
+
 /** TradingView-style Yahoo chart: left draw bar + Indicators window */
 export default function LocalAdvancedChart({
   symbol,
@@ -132,6 +184,7 @@ export default function LocalAdvancedChart({
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<Chart | null>(null);
+  const candleListRef = useRef<KLineData[]>([]);
   const [status, setStatus] = useState<'loading' | 'ok' | 'error'>('loading');
   const [spot, setSpot] = useState<number | null>(null);
   const [err, setErr] = useState('');
@@ -316,7 +369,17 @@ export default function LocalAdvancedChart({
           close: c.close,
           volume: Math.max(1, Math.abs(c.high - c.low) * 1000),
         }));
-        chartRef.current?.applyNewData(list);
+        candleListRef.current = list;
+        chartRef.current?.applyNewData(list, true, () => {
+          if (chartRef.current && !cancelled) {
+            applyDaySeparators(chartRef.current, list);
+          }
+        });
+        // Fallback if callback timing differs across klinecharts builds
+        window.setTimeout(() => {
+          if (cancelled || !chartRef.current) return;
+          applyDaySeparators(chartRef.current, list);
+        }, 50);
         setSpot(data.spot ?? list[list.length - 1]?.close ?? null);
         setStatus('ok');
       } catch (e) {
@@ -345,8 +408,14 @@ export default function LocalAdvancedChart({
   }
 
   function clearDrawings() {
-    chartRef.current?.removeOverlay();
+    const chart = chartRef.current;
+    if (!chart) return;
+    chart.removeOverlay();
     setActiveDraw(null);
+    // Restore day separators after wipe
+    if (candleListRef.current.length) {
+      applyDaySeparators(chart, candleListRef.current);
+    }
   }
 
   function toggleIndicator(id: string) {

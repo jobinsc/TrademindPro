@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 import TradePinaxLogo from '@/components/app/TradePinaxLogo';
+import DarkModeToggle from '@/components/app/DarkModeToggle';
 import { useAuth } from '@/components/auth/AuthProvider';
 function AuthPanel({ mode }: { mode: 'login' | 'signup' }) {
   const { login, signup, cloudEnabled } = useAuth();
@@ -154,13 +155,14 @@ function HomeInner() {
   }, [mode]);
 
   return (
-    <div className="flex min-h-screen flex-col bg-white text-sky-ink">
+    <div className="flex min-h-screen flex-col bg-sky-soft text-sky-ink">
       <header className="absolute inset-x-0 top-0 z-20">
         <nav className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5 md:px-8">
           <Link href="/" aria-label="TradePinax home" className="flex items-center">
             <TradePinaxLogo height={44} priority />
           </Link>
           <div className="flex items-center gap-3">
+            <DarkModeToggle />
             {ready && user ? (
               <Link
                 href="/app"
@@ -189,7 +191,7 @@ function HomeInner() {
       </header>
 
       <section className="relative flex flex-1 flex-col overflow-hidden">
-        <div className="absolute inset-0 bg-[linear-gradient(165deg,#ffffff_0%,#f4f9fd_38%,#dceef8_72%,#c5e3f5_100%)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(165deg,var(--sky-card)_0%,var(--sky-soft)_38%,var(--sky-mist)_72%,var(--sky-light)_100%)]" />
         <div className="hero-glow absolute -right-24 top-16 h-[420px] w-[420px] rounded-full bg-[#9fd0ee]/35 blur-3xl" />
         <div
           className="hero-glow absolute -left-20 bottom-10 h-[320px] w-[320px] rounded-full bg-[#b8ddf5]/40 blur-3xl"

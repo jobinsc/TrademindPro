@@ -15,7 +15,7 @@ import {
   laneForceFlatAt,
   shouldSquareOffAll,
 } from '@/lib/nexus-pulse/lanes';
-import { openNexusPaperTrade, updateOpenTrades } from '@/lib/nexus-pulse/paper-broker';
+import { openNexusPaperTrade, paintDisplayMark, updateOpenTrades } from '@/lib/nexus-pulse/paper-broker';
 import {
   NEXUS_B_LANES as NEXUS_LANES,
   NEXUS_PULSE_B_RULES as NEXUS_PULSE_RULES,
@@ -25,17 +25,58 @@ import {
   type NexusBLaneId as NexusLaneId,
 } from '@/lib/nexus-pulse-b/rules';
 import { lastClosedBar, resampleMinutes } from '@/lib/nexus-pulse/resample';
+import {
+  fillMarksFromStudyOptionTape,
+  isTfBarFullyClosed,
+  studyOptionPremiumAt,
+} from '@/lib/nexus-pulse/study-option-marks';
+import {
+  lastClosedTfAtOrBefore,
+  studyDaySession1m,
+  studyWantSide,
+  studyWarmupReady,
+} from '@/lib/nexus-pulse/study-parity';
 import { evaluateUtV2Entry } from '@/lib/nexus-pulse/signals';
 import { runUtBot } from '@/lib/nexus-pulse/ut-bot';
 import { loadNexusBSession as loadNexusSession, saveNexusBSession as saveNexusSession } from '@/lib/nexus-pulse-b/session-store';
 import {
   archiveNexusBClosedTrades as archiveClosedTrades,
   clearNexusBArchiveDay as clearArchiveDay,
+  loadNexusBArchiveDay as loadArchiveDay,
 } from '@/lib/nexus-pulse-b/trade-archive';
 import type { NexusAtmBoard, NexusAtmLegQuote, NexusPulseSession, NexusPulseSettings } from '@/lib/nexus-pulse-b/types';
 import type { Candle } from '@/lib/nejoic';
 
 const DEFAULT_ACTIVE_LANES: NexusLaneId[] = ['morning_open_stop_15'];
+
+/**
+ * If the desk session lost closedTrades (board/tick race) but archive still
+ * has them, merge archive back. Clear paper also clears archive, so this
+ * does not undo an intentional wipe.
+ */
+async function hydrateClosedFromArchive(
+  session: NexusPulseSession
+): Promise<NexusPulseSession> {
+  try {
+    const day = await loadArchiveDay('paper', session.sessionDate);
+    const archived = (day.trades || []).filter((t) => t.status === 'closed');
+    if (!archived.length) return session;
+    const byId = new Map(session.closedTrades.map((t) => [t.id, t]));
+    let added = 0;
+    for (const t of archived) {
+      if (byId.has(t.id)) continue;
+      byId.set(t.id, t);
+      added += 1;
+    }
+    if (!added) return session;
+    const closedTrades = Array.from(byId.values()).sort((a, b) =>
+      String(a.closedAt || a.openedAt).localeCompare(String(b.closedAt || b.openedAt))
+    );
+    return { ...session, closedTrades };
+  } catch {
+    return session;
+  }
+}
 
 /** Cache 1m Sensex candles ~45s â€” need closed bars for Sector 7 B. */
 let candleCache: { at: number; candles: Candle[] } | null = null;
@@ -56,30 +97,6 @@ const ATM_CACHE_TTL_MS = 3 * 60_000;
 
 function openTradesHaveKeys(trades: { instrumentKey: string }[]): boolean {
   return trades.some((t) => Boolean(t.instrumentKey));
-}
-
-async function fillMarksFromOption1mClose(
-  accessToken: string,
-  markMap: Map<string, number>,
-  trades: { instrumentKey: string }[]
-): Promise<void> {
-  const keys = [...new Set(trades.map((t) => t.instrumentKey).filter(Boolean))];
-  await Promise.all(
-    keys.map(async (instrumentKey) => {
-      try {
-        const { candles } = await fetchUpstoxIntradayCandles({
-          accessToken,
-          instrumentKey,
-          unit: 'minutes',
-          interval: 1,
-        });
-        const closed = lastClosedBar(candles, 1);
-        if (closed && closed.close > 0) markMap.set(instrumentKey, closed.close);
-      } catch {
-        /* keep LTP */
-      }
-    })
-  );
 }
 
 function defaultSettings(): NexusPulseSettings {
@@ -575,14 +592,9 @@ export async function quoteNexusBBoardOnly(
         }
       : null,
   });
-  if (existing && board.spot > 0) {
-    await saveNexusSession({
-      ...existing,
-      spot: board.spot,
-      board,
-      updatedAt: new Date().toISOString(),
-    }).catch(() => undefined);
-  }
+  // Do NOT persist session from board poll — concurrent /tick fills/closes were
+  // getting wiped by stale full-session rewrites. Board is returned to the client;
+  // /tick and /init own durable session writes.
   return { board, spot: board.spot, latencyMs: Date.now() - t0 };
 }
 
@@ -592,18 +604,20 @@ export async function initNexusBSession(accessToken: string): Promise<NexusPulse
   // Fast Start: do NOT run full candle tick here — Upstox rate-limits make that hang
   // the UI for minutes. Board quotes only; strategy tick catches up via /tick poll.
   let base = normalizeSession(existing ?? shell(sessionDate, 0));
-  // Do NOT hydrate closed trades from archive into the desk session — "Clear paper"
-  // / fresh-start must stay empty. History stays on Trade Archive page only.
-  if (!existing) {
+  base = await hydrateClosedFromArchive(base);
+  if (!existing || base.closedTrades.length !== (existing.closedTrades?.length ?? 0)) {
     await saveNexusSession(base);
   }
   try {
     const { board, spot } = await quoteNexusBBoardOnly(accessToken, {
       allowResolve: !(existing?.board?.ce && existing?.board?.pe),
     });
+    // Prefer disk latest after board quote (may have concurrent tick fills).
+    let latest = (await loadNexusSession(sessionDate)) ?? base;
+    latest = await hydrateClosedFromArchive(latest);
     const next: NexusPulseSession = {
-      ...base,
-      spot: spot > 0 ? spot : base.spot,
+      ...latest,
+      spot: spot > 0 ? spot : latest.spot,
       board,
       updatedAt: new Date().toISOString(),
     };
@@ -622,6 +636,7 @@ export async function tickNexusBSession(
   let session = normalizeSession(
     sessionIn ?? (await loadNexusSession(sessionDate)) ?? shell(sessionDate, 0)
   );
+  session = await hydrateClosedFromArchive(session);
 
   // Warm Sector 7 B with prior days + today; quote Sensex for true live spot.
   const oneMin = await loadOneMinuteCandles(accessToken, sessionDate);
@@ -690,36 +705,47 @@ export async function tickNexusBSession(
     if (q && q.lastPrice > 0) ltpMap.set(t.instrumentKey, q.lastPrice);
   }
 
-  const pos5mSnap = ut5m.last?.pos ?? 0;
-
-  // Closed bars only — ignore in-progress 3m/5m (same as Nifty fix).
-  const bars3Study = runUtBot(candles3m, NEXUS_UT_3M);
-  const bars5Study = runUtBot(candles5m, NEXUS_UT_5M);
-  const last3Study = lastClosedBar(bars3Study, 3);
-  const last5Study = lastClosedBar(bars5Study, 5);
+  // Study parity: same-day session 1m only + fully closed 3m/5m (no half-built 5m flicker).
+  const day1m = studyDaySession1m(oneMin, sessionDate);
+  const bars3Study = runUtBot(resampleMinutes(day1m, 3), NEXUS_UT_3M);
+  const bars5Study = runUtBot(resampleMinutes(day1m, 5), NEXUS_UT_5M);
+  const closed1m = lastClosedBar(day1m.length ? day1m : oneMin, 1);
+  const t1 = closed1m?.t ?? null;
+  const tsMs = t1 ? new Date(t1).getTime() : Date.now();
+  const last3Study = lastClosedTfAtOrBefore(bars3Study, 3, tsMs);
+  const last5Study = lastClosedTfAtOrBefore(bars5Study, 5, tsMs);
   const t3 = last3Study?.t ?? null;
   const buy3 = Boolean(last3Study?.buy);
   const sell3 = Boolean(last3Study?.sell);
-  const pos5m = (last5Study?.pos ?? pos5mSnap) as -1 | 0 | 1;
+  const pos5m = (last5Study?.pos ?? 0) as -1 | 0 | 1;
   let lastConsumed3mTs = session.lastConsumed3mTs ?? null;
   let lastExitEval1mTs = session.lastExitEval1mTs ?? null;
   const fresh3m = Boolean(t3 && t3 !== lastConsumed3mTs);
+  const warmedUp = studyWarmupReady(day1m, t1);
 
-  const closed1m = lastClosedBar(oneMin, 1);
-  const t1 = closed1m?.t ?? null;
   const newClosed1m = Boolean(t1 && t1 !== lastExitEval1mTs);
   const sq = shouldSquareOffAll();
   const forceFlat = laneForceFlatAt('morning_open_stop_15');
   const studyExitsEnabled = newClosed1m || sq || forceFlat;
+  const strictStudy = NEXUS_PULSE_RULES.matchRealOptionStudy;
 
-  if (studyExitsEnabled && openTradesHaveKeys(session.openTrades)) {
-    await fillMarksFromOption1mClose(accessToken, ltpMap, session.openTrades);
+  const markMap = new Map<string, number>();
+  if (studyExitsEnabled && openTradesHaveKeys(session.openTrades) && t1) {
+    await fillMarksFromStudyOptionTape(accessToken, markMap, session.openTrades, {
+      day: sessionDate,
+      tsMs,
+    });
+  }
+  if (sq || forceFlat || !strictStudy) {
+    for (const [k, v] of ltpMap) {
+      if (!markMap.has(k) && v > 0) markMap.set(k, v);
+    }
   }
 
   let openTrades = [...session.openTrades];
   let closedTrades = [...session.closedTrades];
 
-  const { stillOpen, closed } = updateOpenTrades(openTrades, ltpMap, {
+  const { stillOpen, closed } = updateOpenTrades(openTrades, markMap, {
     ut3mSellEdge: studyExitsEnabled && fresh3m && sell3,
     ut3mBuyEdge: studyExitsEnabled && fresh3m && buy3,
     pos5m: studyExitsEnabled && fresh3m ? pos5m : 0,
@@ -727,7 +753,10 @@ export async function tickNexusBSession(
     squareOff: sq,
     studyExitsEnabled,
   });
-  openTrades = stillOpen;
+  openTrades = stillOpen.map((t) => {
+    const ltp = ltpMap.get(t.instrumentKey);
+    return ltp && ltp > 0 ? paintDisplayMark(t, ltp) : t;
+  });
   closedTrades.push(...closed);
   if (newClosed1m && t1) lastExitEval1mTs = t1;
 
@@ -739,12 +768,10 @@ export async function tickNexusBSession(
   const guard = guardState(session);
 
   const freshForEntry = Boolean(t3 && t3 !== lastConsumed3mTs);
+  const t3Confirmed = Boolean(t3 && isTfBarFullyClosed(t3, 3));
+  const aligned = studyWantSide({ buy3, sell3, pos5: pos5m });
   const wantSide: 'CE' | 'PE' | null =
-    newClosed1m && freshForEntry && buy3 && pos5m === 1
-      ? 'CE'
-      : newClosed1m && freshForEntry && sell3 && pos5m === -1
-        ? 'PE'
-        : null;
+    newClosed1m && warmedUp && t3Confirmed && freshForEntry ? aligned : null;
 
   if (!guard.blockedNewEntries && !session.autoPaused && wantSide) {
     const lanesNeedingEntry = session.settings.activeLanes.filter((laneId) => {
@@ -759,13 +786,21 @@ export async function tickNexusBSession(
         wantedSide: wantSide,
         strictAtm: NEXUS_PULSE_RULES.matchRealOptionStudy,
       });
-      if (picked && picked.premium > 0 && sensexPremiumInEntryBand(picked.premium)) {
-        const entryMap = new Map<string, number>([[picked.instrumentKey, picked.premium]]);
-        await fillMarksFromOption1mClose(accessToken, entryMap, [
-          { instrumentKey: picked.instrumentKey },
-        ]);
-        const entryPremium = entryMap.get(picked.instrumentKey) || picked.premium;
-        if (entryPremium > 0) {
+      if (picked?.instrumentKey && t1) {
+        const entryPremiumRaw = await studyOptionPremiumAt({
+          accessToken,
+          instrumentKey: picked.instrumentKey,
+          day: sessionDate,
+          tsMs,
+        });
+        const entryPremium = strictStudy
+          ? entryPremiumRaw && entryPremiumRaw > 0
+            ? entryPremiumRaw
+            : 0
+          : entryPremiumRaw && entryPremiumRaw > 0
+            ? entryPremiumRaw
+            : picked.premium;
+        if (entryPremium > 0 && sensexPremiumInEntryBand(entryPremium)) {
           for (const laneId of lanesNeedingEntry) {
             openTrades.push(
               openNexusPaperTrade({
@@ -808,9 +843,13 @@ export async function tickNexusBSession(
           sell3m: sell3,
           pos5m: pos5m as -1 | 0 | 1,
           new3mEdge: false,
-          reason: !freshForEntry
-            ? 'Sector 7 B: 3m bar already consumed (study gate)'
-            : decision.reason,
+          reason: !warmedUp
+            ? 'Sector 7 B: study warm-up (first 40×1m bars — no entries yet)'
+            : !t3Confirmed
+              ? 'Sector 7 B: waiting for 3m bar to close (study-confirmed signal)'
+              : !freshForEntry
+                ? 'Sector 7 B: 3m bar already consumed (study gate)'
+                : 'No aligned Sector 7 B entry',
         };
 
   session = {

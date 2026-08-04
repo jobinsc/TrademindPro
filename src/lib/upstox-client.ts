@@ -49,6 +49,21 @@ export function isUpstoxConnected(): boolean {
   }
 }
 
+/**
+ * True only when today's Upstox access token is still valid (pre–3:30 AM IST expiry).
+ * Stale / extended-only leftovers must NOT count as "Live market ON".
+ */
+export function isUpstoxLiveSession(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const access = localStorage.getItem(ACCESS_KEY);
+    if (!access) return false;
+    return !isUpstoxAccessTokenExpired(localStorage.getItem(CONNECTED_AT_KEY));
+  } catch {
+    return false;
+  }
+}
+
 export function upstoxNeedsDailyRelogin(): boolean {
   if (typeof window === 'undefined') return false;
   try {

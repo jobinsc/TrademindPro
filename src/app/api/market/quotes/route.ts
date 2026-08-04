@@ -22,16 +22,35 @@ export async function POST(req: NextRequest) {
     };
 
     let keys = body.instrumentKeys?.filter(Boolean) || [];
-    if (!keys.length && body.symbols?.length) {
+    /** instrument_key (often ISIN form) → trading symbol */
+    const keyToSymbol = new Map<string, string>();
+
+    if (body.symbols?.length) {
       const resolved = await resolveInstrumentKeys(body.symbols);
-      keys = Array.from(resolved.values()).map((i) => i.instrumentKey);
+      for (const [sym, row] of resolved) {
+        keyToSymbol.set(row.instrumentKey.replace(/:/g, '|'), sym.toUpperCase());
+        keyToSymbol.set(row.instrumentKey.replace(/\|/g, ':'), sym.toUpperCase());
+      }
+      if (!keys.length) {
+        keys = Array.from(resolved.values()).map((i) => i.instrumentKey);
+      }
     }
     if (!keys.length) {
       return NextResponse.json({ ok: false, error: 'symbols or instrumentKeys required' }, { status: 400 });
     }
 
     const quotes = await fetchUpstoxQuotes(token, keys);
-    return NextResponse.json({ ok: true, count: quotes.length, quotes });
+    const enriched = quotes.map((q) => {
+      const kPipe = q.instrumentKey.replace(/:/g, '|');
+      const kColon = q.instrumentKey.replace(/\|/g, ':');
+      const mapped =
+        keyToSymbol.get(kPipe) ||
+        keyToSymbol.get(kColon) ||
+        keyToSymbol.get(q.instrumentKey) ||
+        q.symbol;
+      return { ...q, symbol: String(mapped || q.symbol || '').toUpperCase() };
+    });
+    return NextResponse.json({ ok: true, count: enriched.length, quotes: enriched });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Quote fetch failed';
     return NextResponse.json({ ok: false, error: message }, { status: 500 });

@@ -52,14 +52,25 @@ function normalizeQuote(raw: QuotePayload, fallbackKey: string): UpstoxQuote | n
   const close = Number(raw.ohlc?.close ?? price);
   const change = Number(raw.net_change ?? price - close);
   const changePct = close > 0 ? (change / close) * 100 : 0;
-  const symbol = String(raw.symbol || '')
-    .replace(/^(NSE_EQ|BSE_EQ):/i, '')
-    .trim()
-    .toUpperCase();
+  const instrumentKey = String(raw.instrument_key || raw.instrument_token || fallbackKey);
+  const stripSeg = (s: string) =>
+    s
+      .replace(/^(NSE_EQ|BSE_EQ|NSE_FO|BSE_FO|NSE_INDEX|BSE_INDEX)[:|]/i, '')
+      .trim()
+      .toUpperCase();
+  const fromRaw = stripSeg(String(raw.symbol || ''));
+  const fromKey = stripSeg(instrumentKey);
+  // Prefer trading symbol; avoid leaving ISINs as the display symbol when possible.
+  const symbol =
+    fromRaw && !/^IN[A-Z0-9]{10}$/i.test(fromRaw)
+      ? fromRaw
+      : fromKey && !/^IN[A-Z0-9]{10}$/i.test(fromKey)
+        ? fromKey
+        : fromRaw || fromKey || instrumentKey;
 
   return {
-    instrumentKey: String(raw.instrument_key || raw.instrument_token || fallbackKey),
-    symbol: symbol || fallbackKey,
+    instrumentKey,
+    symbol,
     lastPrice: price,
     open,
     high,

@@ -71,7 +71,7 @@ It does **not** share entries/exits with PinaxForge, Blink, or ATM Lab.
 | **Gross P&amp;L** | \`(exit premium − entry premium) × 65\` |
 | **Net P&amp;L** | Gross − **₹70** |
 
-**Real-option study** (NexusPulse page) replays the PDF method: UT signals + **real Upstox ATM option 1m closes** (strict ATM).
+**Real-option study** (NexusPulse page) replays the PDF method: UT signals + **real Upstox ATM option 1m closes** (strict ATM). Same warm-up as live (**40×1m**); ranges that include **today** are not cached so morning “0 trades” cannot stick.
 
 **Live paper** uses the **same bar rules as the study**: today’s session candles only, **first 40×1m warm-up** (no early leftover signals like 09:40 vs study 10:12), one action per 3m timestamp, **strict ATM**, Lane B default, and **entry/exit marks from closed option 1m closes only** (live LTP only for forced SQ / 15:00 flat).
 

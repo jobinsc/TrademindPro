@@ -1,7 +1,6 @@
 /**
- * NSE equity F&O underlyings — watchlist universe for Jimbo.
- * Scan engine still uses the tighter JIMBO_UNIVERSE (liquid focus).
- * Lot sizes are approximate exchange defaults — refresh from NSE when live.
+ * NSE equity F&O underlyings — sole Jimbo watchlist + CCI scan universe.
+ * Live equity LTPs refresh in Jimbo; CCI setups filter this list and attach live ATM option premiums.
  */
 
 export type JimboFoStock = {

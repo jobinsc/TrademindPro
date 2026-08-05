@@ -39,6 +39,17 @@ import type { Candle } from '@/lib/nejoic';
 
 const DEFAULT_ACTIVE_LANES: NexusLaneId[] = ['morning_open_stop_15'];
 
+/** Serialize init/tick/settings/reset so concurrent polls cannot wipe closed fills. */
+let deskMutex: Promise<void> = Promise.resolve();
+function withDeskLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = deskMutex.then(fn, fn);
+  deskMutex = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
 /** Restore closed fills wiped by races; Clear paper also clears archive so this is safe. */
 async function hydrateClosedFromArchive(
   session: NexusPulseSession
@@ -564,6 +575,10 @@ export async function quoteNexusBoardOnly(
 }
 
 export async function initNexusSession(accessToken: string): Promise<NexusPulseSession> {
+  return withDeskLock(() => initNexusSessionUnlocked(accessToken));
+}
+
+async function initNexusSessionUnlocked(accessToken: string): Promise<NexusPulseSession> {
   const sessionDate = istDate();
   const existing = await loadNexusSession(sessionDate);
   // Fast Start: board quotes only — full candle tick runs on /tick poll.
@@ -583,14 +598,20 @@ export async function initNexusSession(accessToken: string): Promise<NexusPulseS
       board,
       updatedAt: new Date().toISOString(),
     };
-    await saveNexusSession(next);
-    return next;
+    return saveNexusSession(next);
   } catch {
     return base;
   }
 }
 
 export async function tickNexusSession(
+  accessToken: string,
+  sessionIn?: NexusPulseSession
+): Promise<NexusPulseSession> {
+  return withDeskLock(() => tickNexusSessionUnlocked(accessToken, sessionIn));
+}
+
+async function tickNexusSessionUnlocked(
   accessToken: string,
   sessionIn?: NexusPulseSession
 ): Promise<NexusPulseSession> {
@@ -748,9 +769,12 @@ export async function tickNexusSession(
     });
 
     if (lanesNeedingEntry.length) {
+      // Study parity: ATM from closed 1m Nifty close (not live LTP flicker).
+      const pickSpot =
+        closed1m && closed1m.close > 0 ? closed1m.close : spot;
       const { picked } = await pickPinaxOptions({
         accessToken,
-        spot,
+        spot: pickSpot,
         wantedSide: wantSide,
         minPremiumFloor: NEXUS_PULSE_RULES.minPremiumFloor,
       });
@@ -780,7 +804,7 @@ export async function tickNexusSession(
                 strike: picked.strike,
                 expiry: picked.expiry,
                 entryPremium,
-                entrySpot: spot,
+                entrySpot: pickSpot,
                 lotSize: picked.lotSize,
               })
             );
@@ -837,7 +861,7 @@ export async function tickNexusSession(
     closedTrades,
   };
 
-  await saveNexusSession(session);
+  session = await saveNexusSession(session);
 
   // Durable dated archive (separate from session file) — paper now; live when enabled.
   const mode = NEXUS_PULSE_RULES.liveOrdersAllowed ? 'live' : 'paper';
@@ -867,37 +891,40 @@ export async function updateNexusSettings(
   sessionDate: string,
   patch: Partial<NexusPulseSettings>
 ): Promise<NexusPulseSession> {
-  const session = normalizeSession((await loadNexusSession(sessionDate)) ?? shell(sessionDate, 0));
-  const activeLanes = Array.isArray(patch.activeLanes)
-    ? patch.activeLanes.filter((x): x is NexusLaneId => x === 'current_bans' || x === 'morning_open_stop_15')
-    : session.settings.activeLanes;
-  session.settings = {
-    ...session.settings,
-    ...patch,
-    activeLanes: activeLanes.length ? activeLanes : [...DEFAULT_ACTIVE_LANES],
-    stopAfterLossInr: Math.max(0, Number(patch.stopAfterLossInr ?? session.settings.stopAfterLossInr) || 0),
-  };
-  session.guard = guardState(session);
-  await saveNexusSession(session);
-  return session;
+  return withDeskLock(async () => {
+    const session = normalizeSession((await loadNexusSession(sessionDate)) ?? shell(sessionDate, 0));
+    const activeLanes = Array.isArray(patch.activeLanes)
+      ? patch.activeLanes.filter((x): x is NexusLaneId => x === 'current_bans' || x === 'morning_open_stop_15')
+      : session.settings.activeLanes;
+    session.settings = {
+      ...session.settings,
+      ...patch,
+      activeLanes: activeLanes.length ? activeLanes : [...DEFAULT_ACTIVE_LANES],
+      stopAfterLossInr: Math.max(0, Number(patch.stopAfterLossInr ?? session.settings.stopAfterLossInr) || 0),
+    };
+    session.guard = guardState(session);
+    return saveNexusSession(session);
+  });
 }
 
 export async function resetNexusPaperSession(
   sessionDate: string
 ): Promise<NexusPulseSession> {
-  const existing = normalizeSession((await loadNexusSession(sessionDate)) ?? shell(sessionDate, 0));
-  const next: NexusPulseSession = {
-    ...shell(sessionDate, existing.spot || 0),
-    board: existing.board ?? null,
-    settings: existing.settings,
-    guard: guardState({
-      ...existing,
-      openTrades: [],
-      closedTrades: [],
+  return withDeskLock(async () => {
+    const existing = normalizeSession((await loadNexusSession(sessionDate)) ?? shell(sessionDate, 0));
+    const next: NexusPulseSession = {
+      ...shell(sessionDate, existing.spot || 0),
       board: existing.board ?? null,
-    }),
-  };
-  await saveNexusSession(next);
-  await clearArchiveDay('paper', sessionDate).catch(() => undefined);
-  return next;
+      settings: existing.settings,
+      guard: guardState({
+        ...existing,
+        openTrades: [],
+        closedTrades: [],
+        board: existing.board ?? null,
+      }),
+    };
+    const saved = await saveNexusSession(next, { replaceBook: true });
+    await clearArchiveDay('paper', sessionDate).catch(() => undefined);
+    return saved;
+  });
 }

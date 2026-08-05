@@ -49,15 +49,26 @@ export function detectZeroCross(
   lookback = 3
 ): CciCross | null {
   for (let i = cci.length - 1; i >= Math.max(1, cci.length - lookback); i--) {
-    const curr = cci[i];
-    const prev = cci[i - 1];
-    if (curr == null || prev == null) continue;
-    if (prev < 0 && curr >= 0) {
-      return { index: i, direction: 'up_through_zero', prev, curr };
-    }
-    if (prev > 0 && curr <= 0) {
-      return { index: i, direction: 'down_through_zero', prev, curr };
-    }
+    const hit = detectZeroCrossAt(cci, i);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** Zero-cross check at a specific bar index (for historical backtests). */
+export function detectZeroCrossAt(
+  cci: (number | null)[],
+  index: number
+): CciCross | null {
+  if (index < 1 || index >= cci.length) return null;
+  const curr = cci[index];
+  const prev = cci[index - 1];
+  if (curr == null || prev == null) return null;
+  if (prev < 0 && curr >= 0) {
+    return { index, direction: 'up_through_zero', prev, curr };
+  }
+  if (prev > 0 && curr <= 0) {
+    return { index, direction: 'down_through_zero', prev, curr };
   }
   return null;
 }

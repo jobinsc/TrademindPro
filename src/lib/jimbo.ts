@@ -2,7 +2,7 @@
  * Jimbo — liquid stock options agent
  * Universe: Nifty 50 / liquid F&O stocks only
  * Trigger: CCI crosses 0 (bottom→top → ATM CE, top→bottom → ATM PE) + PA confirm
- * Market hours only (NSE cash 09:15–15:30 IST)
+ * Market hours only (Jimbo paper session 09:15–15:12 IST)
  */
 
 import {
@@ -11,12 +11,17 @@ import {
   priceActionConfirm,
   type OhlcBar,
 } from '@/lib/cci';
+import { NSE_EQUITY_FO_WATCHLIST } from '@/lib/jimbo-fo-universe';
 import type {
   NejoicAnalysisStyle,
   NejoicStrategyId,
   NejoicTimeframeId,
 } from '@/lib/nejoic-options';
-import { roundPremium, simulatedPremiumWalk } from '@/lib/paper-exit';
+import {
+  isJimboEntryPremiumAllowed,
+  JIMBO_MIN_OPTION_ENTRY_PREMIUM,
+  roundPremium,
+} from '@/lib/paper-exit';
 import { styleToSetup } from '@/lib/nejoic';
 
 export { styleToSetup };
@@ -55,17 +60,34 @@ export type JimboSettings = {
   orbMinutes: number;
   respectLunchHour: boolean;
   tradeOnlyMarketHours: boolean;
+  /** When true, skip daily profit / max-loss gates (legacy; prefer per-limit toggles). */
   ignoreDailyLimits: boolean;
+  /** Enforce daily max-loss stop (default off — run until session end). */
+  enforceMaxLossLimit: boolean;
+  /** Enforce daily profit target stop (default off). */
+  enforceDailyTargetLimit: boolean;
+  /** Enforce max paper trades per day (default off). */
+  enforceMaxTradesLimit: boolean;
+  /** Cap on new paper opens today when enforceMaxTradesLimit is on. */
+  maxTradesPerDay: number;
   askMode: 'rules' | 'nejoic_math';
   brokeragePerLot: number;
   targetPoints: number;
   stopLossPoints: number;
   trailingStopPoints: number;
   trailingActivatePoints: number;
+  /** Nexus Sector 7–style MFE giveback trail on option premium. */
+  mfeProfitTrail: boolean;
+  /** Arm trail after this many premium points of MFE (default 7). */
+  mfeTrailTriggerPts: number;
+  /** Keep this fraction of MFE; exit when open profit falls below it (0.5 = 50%). */
+  mfeTrailKeepFrac: number;
   /** Stock scan — CCI zero-cross period */
   cciPeriod: number;
   /** Only trade stocks with liquidityRank <= this (1 = most liquid) */
   maxLiquidityRank: number;
+  /** Which names CCI scan / auto paper trade should walk */
+  scanScope: JimboScanScope;
   /** Require price-action confirm after CCI cross */
   requirePaConfirm: boolean;
   /** Block new trades when NSE closed (manual + auto) */
@@ -76,6 +98,27 @@ export type JimboSettings = {
   settingsOpen: boolean;
   updatedAt: string | null;
 };
+
+/** CCI scan / auto universe */
+export type JimboScanScope = 'full' | 'liquid' | 'focus';
+
+/** Practical candle TFs for Jimbo stock-option CCI scans */
+export const JIMBO_SCAN_TIMEFRAMES: { id: NejoicTimeframeId; label: string }[] = [
+  { id: '1m', label: '1m' },
+  { id: '2m', label: '2m' },
+  { id: '3m', label: '3m' },
+  { id: '5m', label: '5m' },
+  { id: '15m', label: '15m' },
+  { id: '30m', label: '30m' },
+  { id: '1H', label: '1H' },
+  { id: '1D', label: '1D' },
+];
+
+export const JIMBO_SCAN_SCOPE_OPTIONS: { id: JimboScanScope; label: string; hint: string }[] = [
+  { id: 'liquid', label: 'Liquid 25', hint: 'Fast — top liquid F&O names' },
+  { id: 'focus', label: 'Focus', hint: 'Your momentum focus chips only' },
+  { id: 'full', label: 'Full F&O', hint: 'All ~190 NSE equity F&O names' },
+];
 
 export type LiquidStock = {
   symbol: string;
@@ -127,6 +170,9 @@ export type JimboSignal = {
   strike: number;
   premium: number;
   lotSize: number;
+  /** Upstox option instrument key when quoted live */
+  instrumentKey?: string | null;
+  tradingSymbol?: string | null;
   cciPrev: number;
   cciCurr: number;
   cciPeriod: number;
@@ -149,8 +195,18 @@ export type JimboTrade = {
   pnl: number | null;
   status: 'open' | 'closed';
   note: string;
-  /** Highest seen premium while open (paper trailing) */
+  /** Highest option premium seen after entry (live Upstox) */
   peakPremium?: number | null;
+  /** Lowest option premium seen after entry (live Upstox) */
+  lowPremium?: number | null;
+  /** Latest live Upstox mark while open */
+  markPremium?: number | null;
+  /** When markPremium was last updated */
+  markAt?: string | null;
+  /** Upstox option instrument — required for live mark-to-market */
+  instrumentKey?: string | null;
+  tradingSymbol?: string | null;
+  priceSource?: 'upstox' | 'unknown';
 };
 
 export type JimboChat = {
@@ -193,15 +249,23 @@ export function defaultJimboSettings(): JimboSettings {
     orbMinutes: 15,
     respectLunchHour: true,
     tradeOnlyMarketHours: true,
-    ignoreDailyLimits: false,
+    ignoreDailyLimits: true,
+    enforceMaxLossLimit: false,
+    enforceDailyTargetLimit: false,
+    enforceMaxTradesLimit: false,
+    maxTradesPerDay: 10,
     askMode: 'nejoic_math',
     brokeragePerLot: 175,
-    targetPoints: 40,
-    stopLossPoints: 25,
+    targetPoints: 18,
+    stopLossPoints: 10,
     trailingStopPoints: 0,
     trailingActivatePoints: 20,
+    mfeProfitTrail: true,
+    mfeTrailTriggerPts: 7,
+    mfeTrailKeepFrac: 0.5,
     cciPeriod: 20,
     maxLiquidityRank: 25,
+    scanScope: 'liquid',
     requirePaConfirm: true,
     tradeOnlyWhenMarketOpen: true,
     mode: 'paper',
@@ -212,7 +276,9 @@ export function defaultJimboSettings(): JimboSettings {
   };
 }
 
-/** NSE cash market session in Asia/Kolkata */
+/** Jimbo paper session in Asia/Kolkata — new trades until 15:12 IST */
+export const JIMBO_SESSION_CLOSE_HHMM = { hour: 15, minute: 12 } as const;
+
 export function isNseMarketOpen(now = new Date()): boolean {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Asia/Kolkata',
@@ -229,17 +295,18 @@ export function isNseMarketOpen(now = new Date()): boolean {
   const minute = Number(parts.find((p) => p.type === 'minute')?.value || 0);
   const mins = hour * 60 + minute;
   const open = 9 * 60 + 15;
-  const close = 15 * 60 + 30;
-  return mins >= open && mins <= close;
+  const close =
+    JIMBO_SESSION_CLOSE_HHMM.hour * 60 + JIMBO_SESSION_CLOSE_HHMM.minute;
+  return mins >= open && mins < close;
 }
 
 export function marketSessionLabel(now = new Date()): string {
   return isNseMarketOpen(now)
-    ? 'NSE open (09:15–15:30 IST)'
-    : 'NSE closed — Jimbo scans for study only; no new auto trades';
+    ? 'Jimbo session open (09:15–15:12 IST)'
+    : 'Session closed (after 15:12 IST) — scan for study only; no new auto trades';
 }
 
-function roundStrike(price: number): number {
+export function roundJimboStrike(price: number): number {
   if (price >= 5000) return Math.round(price / 100) * 100;
   if (price >= 1000) return Math.round(price / 50) * 50;
   if (price >= 200) return Math.round(price / 10) * 10;
@@ -313,87 +380,10 @@ export function realizedToday(trades: JimboTrade[]): number {
   }, 0);
 }
 
-export function scanJimboUniverse(
-  settings: Pick<
-    JimboSettings,
-    'cciPeriod' | 'maxLiquidityRank' | 'requirePaConfirm' | 'minConfidence'
-  >,
-  opts?: { forceAllowClosed?: boolean }
-): { signals: JimboSignal[]; marketOpen: boolean; scanned: number } {
-  const marketOpen = isNseMarketOpen();
-  const signals: JimboSignal[] = [];
-  const maxRank = settings.maxLiquidityRank ?? 25;
-  const universe = JIMBO_UNIVERSE.filter((s) => s.liquidityRank <= maxRank);
-
-  for (const stock of universe) {
-    const bars = buildStockBars(stock);
-    const cci = computeCci(bars, settings.cciPeriod);
-    const cross = detectZeroCross(cci, 4);
-    if (!cross) continue;
-
-    const pa = priceActionConfirm(bars, cross.direction);
-    const requirePa = settings.requirePaConfirm !== false;
-    const paOk = requirePa ? pa.ok : true;
-    const spot = bars[bars.length - 1]?.close ?? stock.price;
-    const strike = roundStrike(spot);
-
-    if (cross.direction === 'up_through_zero') {
-      const bias = paOk ? 'CE' : 'FLAT';
-      const confidence = paOk
-        ? 78 + Math.min(12, stock.liquidityRank <= 5 ? 12 : 6)
-        : 42;
-      signals.push({
-        id: crypto.randomUUID?.() ?? `j-${stock.symbol}-${Date.now()}`,
-        at: new Date().toISOString(),
-        symbol: stock.symbol,
-        name: stock.name,
-        spot,
-        bias,
-        strike,
-        premium: bias === 'CE' ? Math.max(8, Math.round(spot * 0.008 * 100) / 100) : 0,
-        lotSize: stock.lotSize,
-        cciPrev: Math.round(cross.prev * 10) / 10,
-        cciCurr: Math.round(cross.curr * 10) / 10,
-        cciPeriod: settings.cciPeriod,
-        confidence,
-        reason: `CCI(${settings.cciPeriod}) crossed above 0 (${cross.prev.toFixed(1)} → ${cross.curr.toFixed(1)}). Liquid F&O name (rank #${stock.liquidityRank}).`,
-        paDetail: requirePa ? pa.detail : `${pa.detail} (PA confirm optional in settings)`,
-      });
-    } else {
-      const bias = paOk ? 'PE' : 'FLAT';
-      const confidence = paOk
-        ? 78 + Math.min(12, stock.liquidityRank <= 5 ? 12 : 6)
-        : 42;
-      signals.push({
-        id: crypto.randomUUID?.() ?? `j-${stock.symbol}-${Date.now()}`,
-        at: new Date().toISOString(),
-        symbol: stock.symbol,
-        name: stock.name,
-        spot,
-        bias,
-        strike,
-        premium: bias === 'PE' ? Math.max(8, Math.round(spot * 0.008 * 100) / 100) : 0,
-        lotSize: stock.lotSize,
-        cciPrev: Math.round(cross.prev * 10) / 10,
-        cciCurr: Math.round(cross.curr * 10) / 10,
-        cciPeriod: settings.cciPeriod,
-        confidence,
-        reason: `CCI(${settings.cciPeriod}) crossed below 0 (${cross.prev.toFixed(1)} → ${cross.curr.toFixed(1)}). Liquid F&O name (rank #${stock.liquidityRank}).`,
-        paDetail: requirePa ? pa.detail : `${pa.detail} (PA confirm optional in settings)`,
-      });
-    }
-  }
-
-  const minConf = settings.minConfidence ?? 75;
-  signals.sort((a, b) => {
-    const ao = a.bias === 'FLAT' || a.confidence < minConf ? 1 : 0;
-    const bo = b.bias === 'FLAT' || b.confidence < minConf ? 1 : 0;
-    if (ao !== bo) return ao - bo;
-    return b.confidence - a.confidence;
-  });
-
-  void opts;
-  return { signals, marketOpen, scanned: universe.length };
+/** Opens started today (IST calendar day) — used for max-trades gate. */
+export function jimboTradesOpenedToday(trades: JimboTrade[]): number {
+  const date = todayKey();
+  return trades.filter((t) => t.at.slice(0, 10) === date).length;
 }
 
 export function canOpenJimboTrade(
@@ -406,13 +396,25 @@ export function canOpenJimboTrade(
     return { ok: false, reason: 'Live stock-option orders not connected yet. Paper only.' };
   }
   if (settings.tradeOnlyWhenMarketOpen !== false && !marketOpen) {
-    return { ok: false, reason: 'Market closed — enable trades only in session (Jimbo setting).' };
+    return {
+      ok: false,
+      reason: 'Session closed (after 15:12 IST) — no new Jimbo trades.',
+    };
   }
-  if (pnl >= settings.dailyProfitTarget) {
+  const enforceTarget = settings.enforceDailyTargetLimit === true;
+  const enforceLoss = settings.enforceMaxLossLimit === true;
+  if (enforceTarget && pnl >= settings.dailyProfitTarget) {
     return { ok: false, reason: `Daily target ₹${settings.dailyProfitTarget} hit.` };
   }
-  if (pnl <= -Math.abs(settings.dailyMaxLoss)) {
+  if (enforceLoss && pnl <= -Math.abs(settings.dailyMaxLoss)) {
     return { ok: false, reason: `Max loss ₹${settings.dailyMaxLoss} hit.` };
+  }
+  if (settings.enforceMaxTradesLimit === true) {
+    const cap = Math.max(1, settings.maxTradesPerDay || 10);
+    const n = jimboTradesOpenedToday(trades);
+    if (n >= cap) {
+      return { ok: false, reason: `Max ${cap} Jimbo paper trades/day reached.` };
+    }
   }
   if (trades.some((t) => t.status === 'open')) {
     return { ok: false, reason: 'Already have an open Jimbo stock-option trade.' };
@@ -420,11 +422,120 @@ export function canOpenJimboTrade(
   return { ok: true, reason: 'OK' };
 }
 
+/**
+ * Offline / demo fallback scan — NSE F&O watchlist (not the old 25-name liquid list).
+ * Prefer `runJimboFoCciScan` via `/api/jimbo/cci-scan` for live candles + ATM LTP.
+ */
+export function resolveJimboScanUniverse(
+  scope: JimboScanScope | undefined,
+  opts?: { focusSymbols?: string[]; maxLiquidityRank?: number }
+): typeof NSE_EQUITY_FO_WATCHLIST {
+  const rankCap = opts?.maxLiquidityRank ?? 25;
+  if (scope === 'full') return NSE_EQUITY_FO_WATCHLIST;
+  if (scope === 'focus') {
+    const focus = new Set((opts?.focusSymbols ?? []).map((s) => s.toUpperCase()));
+    if (!focus.size) {
+      return NSE_EQUITY_FO_WATCHLIST.filter((s) =>
+        JIMBO_UNIVERSE.some((u) => u.symbol === s.symbol && u.liquidityRank <= rankCap)
+      );
+    }
+    const hit = NSE_EQUITY_FO_WATCHLIST.filter((s) => focus.has(s.symbol));
+    return hit.length ? hit : NSE_EQUITY_FO_WATCHLIST.slice(0, 25);
+  }
+  // liquid (default)
+  const liquid = new Set(
+    JIMBO_UNIVERSE.filter((u) => u.liquidityRank <= rankCap).map((u) => u.symbol)
+  );
+  return NSE_EQUITY_FO_WATCHLIST.filter((s) => liquid.has(s.symbol));
+}
+
+export function scanJimboUniverse(
+  settings: Pick<
+    JimboSettings,
+    'cciPeriod' | 'maxLiquidityRank' | 'requirePaConfirm' | 'minConfidence' | 'scanScope'
+  >,
+  opts?: {
+    forceAllowClosed?: boolean;
+    liveSpots?: Record<string, number>;
+    focusSymbols?: string[];
+    symbols?: string[];
+  }
+): { signals: JimboSignal[]; marketOpen: boolean; scanned: number } {
+  const marketOpen = isNseMarketOpen();
+  const signals: JimboSignal[] = [];
+  const requirePa = settings.requirePaConfirm !== false;
+  const universe =
+    opts?.symbols?.length
+      ? NSE_EQUITY_FO_WATCHLIST.filter((s) =>
+          opts.symbols!.some((x) => x.toUpperCase() === s.symbol)
+        )
+      : resolveJimboScanUniverse(settings.scanScope, {
+          focusSymbols: opts?.focusSymbols,
+          maxLiquidityRank: settings.maxLiquidityRank,
+        });
+
+  for (const stock of universe) {
+    const live = opts?.liveSpots?.[stock.symbol];
+    const seedStock: LiquidStock = {
+      symbol: stock.symbol,
+      name: stock.name,
+      price: live && live > 0 ? live : 500,
+      lotSize: stock.lotSize,
+      liquidityRank: 1,
+    };
+    const bars = buildStockBars(seedStock);
+    if (bars.length < Math.max(30, settings.cciPeriod + 5)) continue;
+    const cci = computeCci(bars, settings.cciPeriod);
+    const cross = detectZeroCross(cci, 4);
+    if (!cross) continue;
+    const pa = priceActionConfirm(bars, cross.direction);
+    const paOk = requirePa ? pa.ok : true;
+    const spot = live && live > 0 ? live : bars[bars.length - 1]?.close ?? seedStock.price;
+    const strike = roundJimboStrike(spot);
+    const bias: JimboSignal['bias'] =
+      cross.direction === 'up_through_zero' ? (paOk ? 'CE' : 'FLAT') : paOk ? 'PE' : 'FLAT';
+    const confidence = paOk ? 78 : 42;
+    signals.push({
+      id: `j-${stock.symbol}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      at: new Date().toISOString(),
+      symbol: stock.symbol,
+      name: stock.name,
+      spot: Math.round(spot * 100) / 100,
+      bias,
+      strike,
+      premium: 0,
+      lotSize: stock.lotSize,
+      cciPrev: Math.round(cross.prev * 10) / 10,
+      cciCurr: Math.round(cross.curr * 10) / 10,
+      cciPeriod: settings.cciPeriod,
+      confidence,
+      reason:
+        cross.direction === 'up_through_zero'
+          ? `CCI(${settings.cciPeriod}) crossed above 0 (${cross.prev.toFixed(1)} → ${cross.curr.toFixed(1)}) on NSE F&O watchlist.`
+          : `CCI(${settings.cciPeriod}) crossed below 0 (${cross.prev.toFixed(1)} → ${cross.curr.toFixed(1)}) on NSE F&O watchlist.`,
+      paDetail: requirePa ? pa.detail : `${pa.detail} (PA confirm optional in settings)`,
+    });
+  }
+
+  const minConf = settings.minConfidence ?? 75;
+  signals.sort((a, b) => {
+    const ao = a.bias === 'FLAT' || a.confidence < minConf ? 1 : 0;
+    const bo = b.bias === 'FLAT' || b.confidence < minConf ? 1 : 0;
+    if (ao !== bo) return ao - bo;
+    return b.confidence - a.confidence;
+  });
+
+  void opts?.forceAllowClosed;
+  return { signals, marketOpen, scanned: universe.length };
+}
+
 export function openJimboPaper(
   signal: JimboSignal,
   settings?: Pick<JimboSettings, 'maxLotsPerTrade'>
 ): JimboTrade | null {
   if (signal.bias === 'FLAT' || signal.premium <= 0) return null;
+  if (!isJimboEntryPremiumAllowed(signal.premium)) return null;
+  if (!signal.instrumentKey) return null;
   const lots = Math.min(settings?.maxLotsPerTrade ?? 1, 3);
   return {
     id: crypto.randomUUID?.() ?? `jt-${Date.now()}`,
@@ -440,34 +551,38 @@ export function openJimboPaper(
     pnl: null,
     status: 'open',
     note: `${signal.reason} ${signal.paDetail}`,
+    peakPremium: signal.premium,
+    lowPremium: signal.premium,
+    markPremium: signal.premium,
+    markAt: new Date().toISOString(),
+    instrumentKey: signal.instrumentKey,
+    tradingSymbol: signal.tradingSymbol || null,
+    priceSource: 'upstox',
   };
 }
 
+/** Close Jimbo paper at a live Upstox premium — no simulated fill. */
 export function closeJimboPaper(
   trade: JimboTrade,
-  exitPremium?: number | null,
-  tickMs = 12_000
+  exitPremium: number
 ): JimboTrade {
-  let finalExit = exitPremium;
-  if (finalExit == null || finalExit <= 0) {
-    const { ltp } = simulatedPremiumWalk(
-      trade.id,
-      trade.entryPremium,
-      new Date(trade.at).getTime(),
-      Date.now(),
-      tickMs
-    );
-    finalExit = ltp;
+  const finalExit = roundPremium(exitPremium);
+  if (!(finalExit > 0)) {
+    throw new Error('Jimbo close requires live Upstox exit premium');
   }
-  const points = roundPremium(finalExit) - trade.entryPremium;
+  const points = finalExit - trade.entryPremium;
   const pnl = Math.round(points * trade.lotSize * trade.lots);
   return {
     ...trade,
-    exitPremium: roundPremium(finalExit),
+    exitPremium: finalExit,
     exitAt: new Date().toISOString(),
     pnl,
     status: 'closed',
-    peakPremium: null,
+    peakPremium: trade.peakPremium ?? null,
+    lowPremium: trade.lowPremium ?? null,
+    markPremium: null,
+    markAt: null,
+    priceSource: 'upstox',
   };
 }
 
@@ -486,7 +601,7 @@ export function jimboReply(
   const mkt = ctx.marketOpen ? 'Market OPEN' : 'Market CLOSED';
 
   if (!q) {
-    return `I’m ${JIMBO_NAME}. I trade liquid stock options only using CCI zero-cross + price action. ${mkt}. ${pnlLine}`;
+    return `I’m ${JIMBO_NAME}. I trade liquid stock options only using CCI zero-cross + price action. Skip premiums below ₹${JIMBO_MIN_OPTION_ENTRY_PREMIUM}. ${mkt}. ${pnlLine}`;
   }
 
   if (q.includes('scan') || q.includes('find') || q.includes('opportunity') || q.includes('cci')) {

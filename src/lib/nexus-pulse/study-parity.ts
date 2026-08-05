@@ -9,6 +9,13 @@ import type { Candle } from '@/lib/nejoic';
 /** Study loop: `for (let i = 40; i < df1m.length; i++)` — no entries before this index. */
 export const STUDY_1M_WARMUP_BARS = 40;
 
+/**
+ * Minimum same-day 1m bars to run a study day.
+ * Must match live paper (entries after warm-up), NOT an arbitrary 80 (~10:35 IST)
+ * which made morning studies show 0 trades while paper already traded.
+ */
+export const STUDY_MIN_DAY_BARS = STUDY_1M_WARMUP_BARS + 1;
+
 /** Cash/FO session slice used by the study (09:15–15:29 IST). */
 export function sessionSliceCash(candles: Candle[]): Candle[] {
   return candles

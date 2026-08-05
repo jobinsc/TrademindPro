@@ -7,7 +7,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { ensureAppDataDir, getAppDataDir } from '@/lib/app-data-dir';
 
-const CACHE_SCHEMA = 1;
+const CACHE_SCHEMA = 2;
 
 function cacheDir(desk: 'nifty' | 'sensex'): string {
   return path.join(getAppDataDir(), `nexus-pulse${desk === 'sensex' ? '-b' : ''}`, 'study-cache');

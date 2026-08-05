@@ -21,6 +21,7 @@ import { shouldTrailExit } from '@/lib/nexus-pulse/paper-broker';
 import { loadStudyRunCache, saveStudyRunCache } from '@/lib/nexus-pulse/study-cache';
 import {
   STUDY_1M_WARMUP_BARS,
+  STUDY_MIN_DAY_BARS,
   lastClosedTfAtOrBefore,
   sessionSliceCash,
   studyWantSide,
@@ -196,7 +197,7 @@ async function backtestDay(
   day: string,
   lot: number
 ): Promise<NexusPaperTrade[]> {
-  if (df1m.length < 80) return [];
+  if (df1m.length < STUDY_MIN_DAY_BARS) return [];
 
   const bars3 = runUtBot(resampleMinutes(df1m, 3), { keyValue: 1, atrPeriod: 10 });
   const bars5 = runUtBot(resampleMinutes(df1m, 5), { keyValue: 1, atrPeriod: 14 });
@@ -418,18 +419,21 @@ export async function runNexusBRealOptionStudy(opts: {
       : (['morning_open_stop_15'] as NexusLaneId[]);
 
   if (!opts.forceRefresh) {
-    const cached = await loadStudyRunCache<NexusBRealOptionStudyRun>({
-      desk: 'sensex',
-      fromDate,
-      toDate,
-      lanes,
-    });
-    if (cached?.trades) {
-      return {
-        ...cached,
-        fromCache: true,
-        note: `${cached.note || ''} · Served from cache (same rules; click Force refresh to re-pull Upstox).`.trim(),
-      };
+    const includesTodayEarly = fromDate <= todayIso && toDate >= todayIso;
+    if (!includesTodayEarly) {
+      const cached = await loadStudyRunCache<NexusBRealOptionStudyRun>({
+        desk: 'sensex',
+        fromDate,
+        toDate,
+        lanes,
+      });
+      if (cached && Array.isArray(cached.trades)) {
+        return {
+          ...cached,
+          fromCache: true,
+          note: `${cached.note || ''} · Served from cache (same rules; click Force refresh to re-pull Upstox).`.trim(),
+        };
+      }
     }
   }
 
@@ -437,6 +441,7 @@ export async function runNexusBRealOptionStudy(opts: {
   const lot = NEXUS_PULSE_RULES.sensexLotSize;
   const days = weekdays(fromDate, toDate);
   const allTrades: NexusPaperTrade[] = [];
+  const skippedThin: string[] = [];
 
   for (const day of days) {
     let niftyDay: Candle[] = [];
@@ -447,7 +452,10 @@ export async function runNexusBRealOptionStudy(opts: {
     } catch {
       niftyDay = [];
     }
-    if (niftyDay.length < 80) continue;
+    if (niftyDay.length < STUDY_MIN_DAY_BARS) {
+      skippedThin.push(`${day} (${niftyDay.length} bars)`);
+      continue;
+    }
 
     for (const laneId of lanes) {
       const dayTrades = await backtestDay(niftyDay, laneId, tape, day, lot);
@@ -482,12 +490,17 @@ export async function runNexusBRealOptionStudy(opts: {
     note:
       'Sector 7 B Sensex — same UT 3m/5m as Sector 7 A + real Sensex ATM option LTP. Gross = (exit−entry)×20; net − ₹70/trade.' +
       (includesToday
-        ? ' WARNING: range includes TODAY — live FO candles still form; Force refresh can change P&L until the session is closed. Past closed days are stable.'
+        ? ' Range includes TODAY — study uses the same warm-up as live paper (40×1m); Force refresh as the session grows.'
+        : '') +
+      (skippedThin.length
+        ? ` Skipped thin days (need ≥${STUDY_MIN_DAY_BARS}×1m like live): ${skippedThin.join(', ')}.`
         : '') +
       (tape.misses > 0 ? ` Option mark misses: ${tape.misses}.` : ''),
   };
 
-  await saveStudyRunCache({ desk: 'sensex', fromDate, toDate, lanes, run }).catch(() => undefined);
+  if (!includesToday) {
+    await saveStudyRunCache({ desk: 'sensex', fromDate, toDate, lanes, run }).catch(() => undefined);
+  }
   return run;
 }
 
@@ -516,9 +529,9 @@ export async function replayNexusBRealOptionsForDay(opts: {
   const niftyDay = sessionSliceCash(
     await fetchInstrumentDayCandles(opts.accessToken, SENSEX_UNDERLYING_KEY, date, todayIso)
   );
-  if (niftyDay.length < 80) {
+  if (niftyDay.length < STUDY_MIN_DAY_BARS) {
     throw new Error(
-      `Not enough Sensex 1m bars for ${date} (${niftyDay.length}) — market may be closed or Upstox history not ready yet`
+      `Not enough Sensex 1m bars for ${date} (${niftyDay.length}/${STUDY_MIN_DAY_BARS}) — wait for study warm-up (~40 mins after 09:15) or market history not ready`
     );
   }
 

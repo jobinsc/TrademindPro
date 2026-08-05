@@ -15,6 +15,7 @@ import type { NexusAtmBoard, NexusPaperTrade, NexusPulseSession } from '@/lib/ne
 import { fetchAppPost } from '@/lib/local-server';
 import {
   isNexusDeskArmed,
+  mergeKeepClosedSession,
   setNexusDeskArmed,
   setNexusDeskPageOwns,
 } from '@/lib/nexus-desk-runtime';
@@ -259,7 +260,7 @@ export default function NexusPulseWorkspace() {
           stopAfterLossInr: lossInr,
         },
       });
-      setSession(data.session);
+      setSession((prev) => mergeKeepClosedSession(prev, data.session));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Settings save failed');
     } finally {
@@ -336,18 +337,17 @@ export default function NexusPulseWorkspace() {
             if (data.session) {
               setSession((prev) => {
                 // Prefer fresher board from 1s poll if tick is older
-                if (
+                const next =
                   prev?.board?.quotedAt &&
                   data.session.board?.quotedAt &&
                   prev.board.quotedAt > data.session.board.quotedAt
-                ) {
-                  return {
-                    ...data.session,
-                    board: prev.board,
-                    spot: prev.spot || data.session.spot,
-                  };
-                }
-                return data.session;
+                    ? {
+                        ...data.session,
+                        board: prev.board,
+                        spot: prev.spot || data.session.spot,
+                      }
+                    : data.session;
+                return mergeKeepClosedSession(prev, next);
               });
             }
             setError('');
@@ -375,7 +375,7 @@ export default function NexusPulseWorkspace() {
         retries: 0,
         timeoutMs: 45_000,
       });
-      setSession(data.session);
+      setSession((prev) => mergeKeepClosedSession(prev, data.session));
       if (data.session?.board) prevBoardRef.current = data.session.board;
       setNexusDeskArmed('a', true);
       setNexusDeskPageOwns('a', true);
@@ -475,7 +475,7 @@ export default function NexusPulseWorkspace() {
           timeoutMs: 45_000,
         });
         if (cancelled) return;
-        setSession(data.session);
+        setSession((prev) => mergeKeepClosedSession(prev, data.session));
         if (data.session?.board) prevBoardRef.current = data.session.board;
         const hasOpen = (data.session?.openTrades ?? []).some((x) => x.status === 'open');
         if (isNexusDeskArmed('a') || hasOpen) {

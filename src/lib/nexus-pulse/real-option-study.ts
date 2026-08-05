@@ -22,6 +22,7 @@ import { shouldTrailExit } from '@/lib/nexus-pulse/paper-broker';
 import { loadStudyRunCache, saveStudyRunCache } from '@/lib/nexus-pulse/study-cache';
 import {
   STUDY_1M_WARMUP_BARS,
+  STUDY_MIN_DAY_BARS,
   lastClosedTfAtOrBefore,
   sessionSliceCash,
   studyWantSide,
@@ -196,7 +197,7 @@ async function backtestDay(
   day: string,
   lot: number
 ): Promise<NexusPaperTrade[]> {
-  if (df1m.length < 80) return [];
+  if (df1m.length < STUDY_MIN_DAY_BARS) return [];
 
   const bars3 = runUtBot(resampleMinutes(df1m, 3), { keyValue: 1, atrPeriod: 10 });
   const bars5 = runUtBot(resampleMinutes(df1m, 5), { keyValue: 1, atrPeriod: 14 });
@@ -419,18 +420,23 @@ export async function runNexusRealOptionStudy(opts: {
       : (['morning_open_stop_15'] as NexusLaneId[]);
 
   if (!opts.forceRefresh) {
-    const cached = await loadStudyRunCache<NexusRealOptionStudyRun>({
-      desk: 'nifty',
-      fromDate,
-      toDate,
-      lanes,
-    });
-    if (cached?.trades) {
-      return {
-        ...cached,
-        fromCache: true,
-        note: `${cached.note || ''} · Served from cache (same rules; click Force refresh to re-pull Upstox).`.trim(),
-      };
+    const includesTodayEarly = fromDate <= todayIso && toDate >= todayIso;
+    // Never serve cache for ranges that include TODAY — morning empty runs
+    // used to stick at 0 trades while live paper already had fills.
+    if (!includesTodayEarly) {
+      const cached = await loadStudyRunCache<NexusRealOptionStudyRun>({
+        desk: 'nifty',
+        fromDate,
+        toDate,
+        lanes,
+      });
+      if (cached && Array.isArray(cached.trades)) {
+        return {
+          ...cached,
+          fromCache: true,
+          note: `${cached.note || ''} · Served from cache (same rules; click Force refresh to re-pull Upstox).`.trim(),
+        };
+      }
     }
   }
 
@@ -438,6 +444,7 @@ export async function runNexusRealOptionStudy(opts: {
   const lot = NEXUS_PULSE_RULES.niftyLotSize;
   const days = weekdays(fromDate, toDate);
   const allTrades: NexusPaperTrade[] = [];
+  const skippedThin: string[] = [];
 
   for (const day of days) {
     let niftyDay: Candle[] = [];
@@ -448,7 +455,10 @@ export async function runNexusRealOptionStudy(opts: {
     } catch {
       niftyDay = [];
     }
-    if (niftyDay.length < 80) continue;
+    if (niftyDay.length < STUDY_MIN_DAY_BARS) {
+      skippedThin.push(`${day} (${niftyDay.length} bars)`);
+      continue;
+    }
 
     for (const laneId of lanes) {
       const dayTrades = await backtestDay(niftyDay, laneId, tape, day, lot);
@@ -483,12 +493,18 @@ export async function runNexusRealOptionStudy(opts: {
     note:
       'Same engine as D:\\BOTS\\NexusPulse backtest_session_real_options.py — UT 3m/5m + real option LTP path (ATM). Gross PnL = (exit−entry)×lot; net subtracts ₹70/trade (1 lot).' +
       (includesToday
-        ? ' WARNING: range includes TODAY — live FO candles still form; Force refresh can change P&L until the session is closed. Past closed days are stable.'
+        ? ' Range includes TODAY — study uses the same warm-up as live paper (40×1m); Force refresh as the session grows.'
+        : '') +
+      (skippedThin.length
+        ? ` Skipped thin days (need ≥${STUDY_MIN_DAY_BARS}×1m like live): ${skippedThin.join(', ')}.`
         : '') +
       (tape.misses > 0 ? ` Option mark misses: ${tape.misses} (rate-limit / missing candles).` : ''),
   };
 
-  await saveStudyRunCache({ desk: 'nifty', fromDate, toDate, lanes, run }).catch(() => undefined);
+  // Cache only fully closed historical ranges — never cache incomplete "today"
+  if (!includesToday) {
+    await saveStudyRunCache({ desk: 'nifty', fromDate, toDate, lanes, run }).catch(() => undefined);
+  }
   return run;
 }
 
@@ -517,9 +533,9 @@ export async function replayNexusRealOptionsForDay(opts: {
   const niftyDay = sessionSliceCash(
     await fetchInstrumentDayCandles(opts.accessToken, NIFTY_UNDERLYING_KEY, date, todayIso)
   );
-  if (niftyDay.length < 80) {
+  if (niftyDay.length < STUDY_MIN_DAY_BARS) {
     throw new Error(
-      `Not enough Nifty 1m bars for ${date} (${niftyDay.length}) — market may be closed or Upstox history not ready yet`
+      `Not enough Nifty 1m bars for ${date} (${niftyDay.length}/${STUDY_MIN_DAY_BARS}) — wait for study warm-up (~40 mins after 09:15) or market history not ready`
     );
   }
 

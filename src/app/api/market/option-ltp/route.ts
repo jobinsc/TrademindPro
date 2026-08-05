@@ -27,15 +27,6 @@ export async function POST(req: NextRequest) {
       instrumentKey?: string;
     };
 
-    const option = (body.option || 'CE').toUpperCase() as OptionSide;
-    if (option !== 'CE' && option !== 'PE') {
-      return NextResponse.json({ ok: false, error: 'option must be CE or PE' }, { status: 400 });
-    }
-    const spot = Number(body.spot || 0);
-    if (!spot) {
-      return NextResponse.json({ ok: false, error: 'spot required' }, { status: 400 });
-    }
-
     // Direct quote if instrument key already known (open trade exit)
     if (body.instrumentKey) {
       const { fetchUpstoxQuotes } = await import('@/lib/upstox-market');
@@ -55,6 +46,11 @@ export async function POST(req: NextRequest) {
         option,
         strike: body.strike ?? null,
       });
+    }
+
+    const spot = Number(body.spot || 0);
+    if (!spot) {
+      return NextResponse.json({ ok: false, error: 'spot required' }, { status: 400 });
     }
 
     const result = await fetchNiftyOptionLtp({

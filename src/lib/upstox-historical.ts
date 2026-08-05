@@ -97,13 +97,22 @@ export async function fetchUpstoxHistoricalWindow(opts: {
   const encoded = encodeURIComponent(instrumentKey);
   const url = `${UPSTOX_V3_BASE}/historical-candle/${encoded}/${unit}/${interval}/${opts.toDate}/${opts.fromDate}`;
 
-  const res = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    cache: 'no-store',
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      cache: 'no-store',
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      candles: [],
+      error: e instanceof Error ? e.message : 'Upstox historical fetch failed',
+    };
+  }
 
   if (!res.ok) {
     const text = await res.text();
@@ -114,12 +123,20 @@ export async function fetchUpstoxHistoricalWindow(opts: {
     };
   }
 
-  const json = (await res.json()) as {
-    status?: string;
-    data?: { candles?: RawCandle[] };
-  };
-  const candles = parseCandles(json.data?.candles || []);
-  return { ok: true, candles };
+  try {
+    const json = (await res.json()) as {
+      status?: string;
+      data?: { candles?: RawCandle[] };
+    };
+    const candles = parseCandles(json.data?.candles || []);
+    return { ok: true, candles };
+  } catch (e) {
+    return {
+      ok: false,
+      candles: [],
+      error: e instanceof Error ? e.message : 'Upstox historical parse failed',
+    };
+  }
 }
 
 /** Fetch the current trading day's live intraday candles. */
@@ -380,5 +397,77 @@ export function priorValidationYearRange(now = new Date()): {
     fromDate,
     toDate,
     label: `Prior validation year (${fromDate} → ${toDate})`,
+  };
+}
+
+/**
+ * Chunked Upstox V3 historical for any equity/index instrument key.
+ * Minutes 1–15 are limited to ~1 month per request → we chunk.
+ */
+export async function fetchUpstoxInstrumentRange(opts: {
+  accessToken: string;
+  instrumentKey: string;
+  unit?: 'minutes' | 'hours' | 'days';
+  interval: number;
+  fromDate: string;
+  toDate: string;
+  pauseMs?: number;
+}): Promise<{
+  ok: boolean;
+  candles: UpstoxHistCandle[];
+  chunks: number;
+  error?: string;
+  source: 'upstox_v3';
+}> {
+  const unit = opts.unit || 'minutes';
+  const maxDays = unit === 'minutes' && opts.interval <= 15 ? 28 : 90;
+  const chunks = chunkDateRange(opts.fromDate, opts.toDate, maxDays);
+  if (!chunks.length) {
+    return {
+      ok: false,
+      candles: [],
+      chunks: 0,
+      error: 'Invalid date range',
+      source: 'upstox_v3',
+    };
+  }
+
+  const all: UpstoxHistCandle[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const c = chunks[i];
+    const part = await fetchUpstoxHistoricalWindow({
+      accessToken: opts.accessToken,
+      instrumentKey: opts.instrumentKey,
+      unit,
+      interval: opts.interval,
+      fromDate: c.from,
+      toDate: c.to,
+    });
+    if (!part.ok) {
+      if (!all.length) {
+        return {
+          ok: false,
+          candles: [],
+          chunks: i,
+          error: part.error || `Failed chunk ${c.from}→${c.to}`,
+          source: 'upstox_v3',
+        };
+      }
+      break;
+    }
+    all.push(...part.candles);
+    if (i < chunks.length - 1) {
+      await new Promise((r) => setTimeout(r, opts.pauseMs ?? 160));
+    }
+  }
+
+  all.sort((a, b) => a.t.localeCompare(b.t));
+  const unique = [...new Map(all.map((bar) => [bar.t, bar])).values()];
+  return {
+    ok: unique.length > 0,
+    candles: unique,
+    chunks: chunks.length,
+    error: unique.length ? undefined : 'No Upstox candles returned',
+    source: 'upstox_v3',
   };
 }

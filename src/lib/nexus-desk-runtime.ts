@@ -45,3 +45,33 @@ export function nexusDeskPageOwns(desk: NexusDeskId): boolean {
 export function nexusDeskBgShouldTick(desk: NexusDeskId): boolean {
   return isNexusDeskArmed(desk) && !nexusDeskPageOwns(desk);
 }
+
+type ClosedBookTrade = { id: string; openedAt?: string; closedAt?: string | null };
+
+/**
+ * Keep closed fills already shown in the UI if a stale tick/init response omits them.
+ * Clear-paper responses intentionally send an empty book — callers must not use this there.
+ */
+export function mergeKeepClosedSession<
+  TTrade extends ClosedBookTrade,
+  TSession extends { closedTrades: TTrade[]; openTrades: TTrade[] },
+>(prev: TSession | null, next: TSession): TSession {
+  if (!prev?.closedTrades?.length) return next;
+  const byId = new Map(next.closedTrades.map((t) => [t.id, t]));
+  let added = 0;
+  for (const t of prev.closedTrades) {
+    if (byId.has(t.id)) continue;
+    byId.set(t.id, t);
+    added += 1;
+  }
+  if (!added) return next;
+  const closedTrades = Array.from(byId.values()).sort((a, b) =>
+    String(a.closedAt || a.openedAt).localeCompare(String(b.closedAt || b.openedAt))
+  );
+  const closedIds = new Set(closedTrades.map((t) => t.id));
+  return {
+    ...next,
+    closedTrades,
+    openTrades: next.openTrades.filter((t) => !closedIds.has(t.id)),
+  };
+}
